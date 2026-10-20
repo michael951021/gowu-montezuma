@@ -60,3 +60,12 @@ Expected on the 16-core / 2× 3090 box (estimates):
 2. The middle-room bug's exact RAM signature: check `reward_events.jsonl` of a long run for repeated
    `(level, room, 300.0)` events with `exploit: true`, then add them to `exploit_rules` if wanted.
 3. The paper does not say whether the backward window Δ counts env steps or demo nodes.
+
+## Smoke / directional results (laptop, 2026-10-20 — not the GPU box)
+
+| run | budget | result |
+|---|---|---|
+| Phase I `hold_random`, 6 workers, MPS | 8M frames (~8 min, ~16k fps) | **best R = 10,200, 20 rooms of level 1**, exploits flagged 0, death rate 0.25, 159 rollbacks. Demo: key → door → jewels in rooms 0/10/20 → item in room 19 (reward events look legit) |
+| Phase II on that demo, 32 envs, MPS | 3M frames (~25 min, ~2k fps) | 10 segments; entropy 2.89 → 1.8; window success 0.2–0.5; segment 1 start moved from node 33 → 23; `progress` 0.021 → 0.064. Learning is happening; nothing solved yet (the paper's budget is 15–20B frames) |
+
+Not comparable to the paper's curve. These only show that both phases move in the right direction.
