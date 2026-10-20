@@ -159,7 +159,7 @@ class EnvPool:
     # -------------------------------------------------------------- plumbing
     def _recv(self, w):
         msg = self.remotes[w].recv()
-        if isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "__error__":
+        if isinstance(msg, tuple) and len(msg) == 2 and isinstance(msg[0], str) and msg[0] == "__error__":
             raise RuntimeError(f"env worker {w} crashed:\n{msg[1]}")
         return msg
 
