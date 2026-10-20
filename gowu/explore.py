@@ -64,6 +64,7 @@ class GowuConfig:
     log_every_iters: int = 1
     save_every_sec: float = 900.0
     max_iters: int | None = None
+    track_room_landmarks: bool = True    # export per-room landmarks for LR-GoWU baselines (not in GoWU)
 
 
 def lexmax(cands):
@@ -116,6 +117,7 @@ class GoWU:
         self.dirty = np.ones(self.P, bool)  # env state != node state -> restore before next rollout
         self.global_winner = self.tree.acquire(root)
         self.best_node = self.tree.acquire(root)
+        self.room_landmarks: dict = {}   # (level, room) -> (node, U at selection, frames)
 
         # bookkeeping
         self.agent_steps = 0
@@ -316,6 +318,10 @@ class GoWU:
                 self.tree.release(self.best_node)
                 self.best_node = child
 
+        U_new = dict(zip(alive_new, self.score(list(alive_new.values()))))
+        if cfg.track_room_landmarks:
+            self._update_room_landmarks(alive_new, U_new)
+
         # winner selection + pruning, or rollback
         for m in active_groups:
             g = list(self.group(m))
@@ -328,12 +334,36 @@ class GoWU:
                     self._set(p, self.tree.ancestor(self.nodes[p], k))
                     self.dirty[p] = True
                 continue
-            U = self.score([self.nodes[p] for p in alive])
-            winner = lexmax([(self.nodes[p].R, u, p) for p, u in zip(alive, U)])
+            winner = lexmax([(self.nodes[p].R, U_new[p], p) for p in alive])
             for p in g:
                 if p not in alive_new:
                     self._set(p, self.nodes[winner])
                     self.dirty[p] = True
+
+    def _update_room_landmarks(self, alive_new: dict, U_new: dict):
+        """Per-(level, room) lex-max (R, U) node, pinned so its root path survives pruning. Not part of
+        GoWU. It exports the landmark set for LR-GoWU baselines B1/B2 (docs/PLAN_LR_GOWU.md §9).
+        Ties on R are decided with the incumbent's U re-scored by the current RND."""
+        tied = {}
+        for p, child in alive_new.items():
+            key = (child.ram[0], child.ram[1])
+            inc = self.room_landmarks.get(key)
+            if inc is None or child.R > inc[0].R:
+                self._pin_landmark(key, child, U_new[p])
+            elif child.R == inc[0].R:
+                tied.setdefault(key, []).append((U_new[p], child))
+        if tied:
+            U_inc = dict(zip(tied, self.score([self.room_landmarks[k][0] for k in tied])))
+            for key, cands in tied.items():
+                u, child = max(cands, key=lambda c: c[0])
+                if u > U_inc[key]:
+                    self._pin_landmark(key, child, u)
+
+    def _pin_landmark(self, key, node: Node, u: float):
+        old = self.room_landmarks.get(key)
+        self.room_landmarks[key] = (self.tree.acquire(node), float(u), self.frames)
+        if old is not None:
+            self.tree.release(old[0])
 
     def consolidate(self, m: int) -> Node:
         """Group consolidation (Alg. 1 l.29-30): reset the whole group to its lex-max particle."""
@@ -392,6 +422,7 @@ class GoWU:
             best_R=self.best_node.R, global_winner_R=self.global_winner.R,
             group_R=[max(self.nodes[p].R for p in self.group(m)) for m in range(self.cfg.n_groups)],
             rooms=len(self.rooms_seen), max_level=max(l for l, _ in self.rooms_seen),
+            landmarks=len(self.room_landmarks),
             tree_nodes=self.tree.n_alive, tree_created=self.tree.n_created,
             best_depth=self.best_node.depth, best_steps=self.best_node.steps,
             rollbacks=s["rollbacks"], deaths=s["deaths"], exploits=s["exploits"],
@@ -419,7 +450,23 @@ class GoWU:
             pickle.dump(demo, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, path)
         torch.save(dict(rnd=self.rnd.state_dict(), frames=self.frames), os.path.join(self.cfg.out_dir, "rnd.pt"))
+        if self.room_landmarks:
+            self.save_landmarks()
         return path
+
+    def save_landmarks(self):
+        """One landmark per (level, room) with its full root path (checkpoints + actions) for BC."""
+        out = []
+        for key, (node, u, fr) in sorted(self.room_landmarks.items()):
+            nodes = self.tree.path(node)
+            out.append(dict(key=key, R=node.R, U=u, found_at_frames=fr, steps=node.steps, ram=node.ram,
+                            obs_last=node.obs_last, ckpt=node.ckpt,
+                            path_ckpts=[n.ckpt for n in nodes], path_actions=[n.actions for n in nodes],
+                            path_R=[n.R for n in nodes]))
+        path = os.path.join(self.cfg.out_dir, "landmarks.pkl.gz")
+        with gzip.open(path + ".tmp", "wb", compresslevel=3) as f:
+            pickle.dump(dict(frames=self.frames, landmarks=out), f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(path + ".tmp", path)
 
     def run(self, verbose: bool = True):
         cfg = self.cfg

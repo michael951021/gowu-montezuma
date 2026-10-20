@@ -77,6 +77,9 @@ def test_gowu_runs_and_demo_is_consistent(tmp_path, policy):
     assert len(demo["ckpts"]) == len(demo["R_cum"]) >= 1
     assert all(np.diff(demo["R_cum"]) >= 0)
     assert all(np.diff(demo["steps"]) > 0)
+    with gzip.open(tmp_path / "landmarks.pkl.gz") as f:
+        lm = pickle.load(f)["landmarks"]
+    assert lm and all(len(x["path_ckpts"]) == len(x["path_actions"]) for x in lm)
     # every demo checkpoint restores
     e = AtariEnv(seed=1)
     for ck in demo["ckpts"]:
