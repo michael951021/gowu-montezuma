@@ -1,0 +1,35 @@
+# GoWU phase II (backward algorithm) on MR, paper hyperparameters (Tables 6-7, App. G.3).
+# Paper: 10 demos per run, 15-20B frames. Budgeted to 5B frames for one 3090.
+demos:
+  - runs/gowu_mr_s0/demo_best.pkl.gz
+  - runs/gowu_mr_s1/demo_best.pkl.gz
+  - runs/gowu_mr_s2/demo_best.pkl.gz
+total_frames: 5000000000
+n_envs: 128
+unroll: 128
+n_workers: 14
+sticky_p: 0.25
+last_reward_channel: true
+reward_mode: clip
+lr: 0.0001
+gamma: 0.999
+gae_lambda: 0.95
+epochs: 1
+minibatches: 8
+ent_coef: 0.001
+vf_coef: 0.5
+clip: 0.1
+max_grad_norm: 0.5
+amp: true
+curriculum:
+  k_max: 10
+  window: 25
+  dec_mult: [0.25, 0.75]
+  inc_mult: [0.5, 1.0]
+  s_req: 0.2
+  s_req_begin: 0.95
+  n_update: 32
+  eps_tol: 0.0
+  len_buffer: 500
+device: cuda
+out_dir: runs/backward_mr

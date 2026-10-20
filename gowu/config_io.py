@@ -22,12 +22,24 @@ def load_config(cls, argv=None):
             kw.update(yaml.safe_load(f) or {})
     for kv in args.set:
         k, v = kv.split("=", 1)
-        kw[k] = _coerce(v)
+        if "." in k:  # nested: curriculum.window=10
+            outer, inner = k.split(".", 1)
+            kw.setdefault(outer, {})[inner] = _coerce(v)
+        else:
+            kw[k] = _coerce(v)
+    return build(cls, kw)
+
+
+def build(cls, kw: dict):
     names = {f.name: f for f in dataclasses.fields(cls)}
     unknown = set(kw) - set(names)
     if unknown:
         raise SystemExit(f"unknown config keys for {cls.__name__}: {sorted(unknown)}")
-    for k, v in kw.items():
-        if isinstance(v, list) and isinstance(names[k].default, tuple):
+    for k, v in list(kw.items()):
+        f = names[k]
+        sub = f.default_factory() if f.default_factory is not dataclasses.MISSING else None
+        if isinstance(v, dict) and dataclasses.is_dataclass(sub):
+            kw[k] = build(type(sub), v)
+        elif isinstance(v, list) and isinstance(f.default, tuple):
             kw[k] = tuple(v)
     return cls(**kw)

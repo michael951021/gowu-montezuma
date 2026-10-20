@@ -1,0 +1,13 @@
+# Directional check for phase II (~1-2 h on one 3090): do the first segments (first key, first doors) get
+# solved from the demo start?  Uses the tiny phase-I demo.
+demos:
+  - runs/gowu_mr_tiny/demo_best.pkl.gz
+total_frames: 100000000
+n_envs: 128
+unroll: 128
+n_workers: 14
+curriculum:
+  window: 25
+device: cuda
+out_dir: runs/backward_mr_tiny
+save_every: 10
