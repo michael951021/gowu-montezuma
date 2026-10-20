@@ -5,3 +5,4 @@ torch>=2.3
 opencv-python-headless
 pyyaml
 pytest
+matplotlib
