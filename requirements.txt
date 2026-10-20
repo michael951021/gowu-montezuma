@@ -1,0 +1,7 @@
+ale-py>=0.9
+gymnasium>=1.0
+numpy
+torch>=2.3
+opencv-python-headless
+pyyaml
+pytest

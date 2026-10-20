@@ -1,0 +1,13 @@
+# Directional check (~10-20 min on the 16-core box): does the frontier move past the first room?
+game: montezuma_revenge
+total_frames: 20000000
+n_groups: 4
+n_particles: 32
+outer_steps: [10, 20]
+inner_steps: [5, 15]
+rollback: [1, 3]
+particle_policy: hold_random
+n_workers: 14
+device: cuda
+out_dir: runs/gowu_mr_tiny
+save_every_sec: 120

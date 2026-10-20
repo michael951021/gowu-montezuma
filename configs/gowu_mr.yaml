@@ -1,0 +1,16 @@
+# GoWU phase I on Montezuma's Revenge, paper settings (Table 1, Sec. 5-6).
+game: montezuma_revenge
+total_frames: 400000000      # 400M game frames per seed
+n_groups: 4
+n_particles: 32
+outer_steps: [10, 20]
+inner_steps: [5, 15]
+rollback: [1, 3]
+sticky_p: 0.25
+particle_policy: hold_random  # paper Fig. 6b: on par with the learned ensemble; `ensemble` = paper default
+rnd_lr: 0.0003
+rnd_batch: 128
+replay_capacity: 128000
+n_workers: 14                # 16-core box: leave 2 cores for the coordinator/learner
+device: cuda
+out_dir: runs/gowu_mr
