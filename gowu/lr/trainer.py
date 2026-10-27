@@ -277,11 +277,21 @@ class LRGoWU:
             return False
         if s == self.root:
             return True
-        if lm.n_targeted >= self.cfg.n_gate and lm.n_reached == 0:
+        # PLAN §5: an unreachable landmark is skipped only if it has no demos to learn the route from
+        if lm.n_targeted >= self.cfg.n_gate and lm.n_reached == 0 and not lm.demos:
             return False
-        if self.cfg.doomed_gate and lm.n_handoff >= 8 and lm.n_quick_death > 0.9 * lm.n_handoff:
+        if self.cfg.doomed_gate and lm.n_handoff >= 16 and lm.n_quick_death > 0.9 * lm.n_handoff:
             return False
         return True
+
+    def _eligible_fallback(self, g):
+        """g if eligible, else its nearest eligible ancestor (else the root)."""
+        if self._eligible(g):
+            return g
+        for a in self.arch.chain(g, 256):
+            if self._eligible(a):
+                return a
+        return self.root
 
     # ------------------------------------------------------------ episodes
     def _set_goal(self, i, g):
@@ -299,7 +309,7 @@ class LRGoWU:
         cfg = self.cfg
         g = int(self.next_goal[i]) if self.next_goal[i] >= 0 else self.group_goal[self.group[i]]
         if not self._eligible(g):
-            g = self.group_goal[self.group[i]] if self._eligible(self.group_goal[self.group[i]]) else self.root
+            g = self._eligible_fallback(self.group_goal[self.group[i]])
         s = self.arch.slot(ram)
         self.t[i], self.R[i] = 0, 0.0
         self.ep_frames[i, 0] = self.pool.obs[i, 3]
