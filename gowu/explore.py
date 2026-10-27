@@ -17,6 +17,7 @@ import gzip
 import json
 import os
 import pickle
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -51,7 +52,8 @@ class GowuConfig:
     rnd_updates_per_1k_steps: float = 8.0    # learner/actor ratio; ~1 pass over each frame (paper: async, unspecified)
     ens_lr: float = 1e-4
     ens_batch: int = 128
-    ens_updates_per_1k_steps: float = 4.0
+    ens_updates_per_1k_steps: float = 4.0    # used only when ens_async is False
+    ens_async: bool = True               # paper App. F.3: learner trains continuously, rollouts use broadcast weights
     replay_capacity: int = 128_000       # per group
     # exploit guard (App. H)
     exploit_mode: str = "middle_room"
@@ -106,6 +108,22 @@ class GoWU:
             # so we use Adam. The paper's ablation shows the particle policy barely matters.
             self.ensembles = [EnsembleQ(N, 4, self.n_actions).to(self.device) for _ in range(M)]
             self.ens_opts = [torch.optim.Adam(e.parameters(), lr=cfg.ens_lr) for e in self.ensembles]
+            # Rollouts act with a copy of the weights, refreshed every outer step (the paper's parameter
+            # broadcast), so the learner can update its own copy at the same time.
+            self.act_ensembles = [EnsembleQ(N, 4, self.n_actions).to(self.device).requires_grad_(False)
+                                  for _ in range(M)]
+        self._replay_lock = threading.Lock()   # Replay and its numpy RNG are shared with the learner thread
+        self._param_lock = threading.Lock()
+        self._learner_stop = threading.Event()
+        self._learner = None
+        self.ens_updates_total = 0
+        # Separate CUDA stream: rollout inference must not queue behind whole training updates.
+        self._learn_stream = torch.cuda.Stream() if self.device.type == "cuda" else None
+        if self.ensembles is not None:
+            self._sync_acting()
+            if cfg.ens_async:
+                self._learner = threading.Thread(target=self._ens_learner_loop, daemon=True)
+                self._learner.start()
 
         # population + tree
         self.pool.reset(range(self.P))
@@ -163,7 +181,8 @@ class GoWU:
         self._upd_carry["rnd"] -= n_rnd
         if sum(r.size for r in self.replays) >= cfg.rnd_batch:
             for _ in range(n_rnd):
-                x = sample_across(self.replays, cfg.rnd_batch, self.rng)
+                with self._replay_lock:
+                    x = sample_across(self.replays, cfg.rnd_batch, self.rng)
                 x = x[:, -1] if x.ndim == 4 else x  # RND sees the last frame only
                 x = torch.from_numpy(x).to(self.device)[:, None]
                 loss = self.rnd.error(x).mean()
@@ -173,26 +192,55 @@ class GoWU:
                 self.stats["rnd_updates_total"] += 1
                 self.stats["rnd_loss"] += loss.item()
                 self.stats["rnd_n"] += 1
-        if self.ensembles is None:
+        if self.ensembles is None or cfg.ens_async:
             return
         self._upd_carry["ens"] += new_steps * cfg.ens_updates_per_1k_steps / 1000
         n_ens = int(self._upd_carry["ens"])
         self._upd_carry["ens"] -= n_ens
         for _ in range(n_ens):
-            for m, (ens, opt, rep) in enumerate(zip(self.ensembles, self.ens_opts, self.replays)):
-                if rep.size < cfg.ens_batch:
-                    continue
-                idx, obs = rep.sample(cfg.ens_batch)
-                x = torch.from_numpy(obs).to(self.device).float().div_(255.0)
-                x = x[:, None].expand(-1, ens.n, -1, -1, -1)
-                q = ens(x)                                                # (B, n, A)
-                a = torch.from_numpy(rep.act[idx]).to(self.device)
-                qa = q.gather(2, a[:, None, None].expand(-1, ens.n, 1)).squeeze(-1)
-                msk = torch.from_numpy(rep.mask[idx]).to(self.device)
-                loss = (msk * qa.pow(2)).mean()                           # zero target (App. E.1)
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                opt.step()
+            for m in range(self.cfg.n_groups):
+                self._ens_update(m)
+
+    def _ens_update(self, m: int) -> bool:
+        """One masked zero-target update of group m's ensemble (App. E.1)."""
+        cfg = self.cfg
+        ens, opt, rep = self.ensembles[m], self.ens_opts[m], self.replays[m]
+        with self._replay_lock:
+            if rep.size < cfg.ens_batch:
+                return False
+            idx, obs = rep.sample(cfg.ens_batch)
+            act, mask = rep.act[idx].copy(), rep.mask[idx].copy()
+        x = torch.from_numpy(obs).to(self.device).float().div_(255.0)
+        x = x[:, None].expand(-1, ens.n, -1, -1, -1)
+        q = ens(x)                                                # (B, n, A)
+        a = torch.from_numpy(act).to(self.device)
+        qa = q.gather(2, a[:, None, None].expand(-1, ens.n, 1)).squeeze(-1)
+        msk = torch.from_numpy(mask).to(self.device)
+        loss = (msk * qa.pow(2)).mean()                           # zero target (App. E.1)
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        with self._param_lock:
+            opt.step()
+        self.ens_updates_total += 1
+        return True
+
+    def _ens_learner_loop(self):
+        """Asynchronous learning node (Sec. 5.1, App. F.3): train every group's ensemble continuously."""
+        if self._learn_stream is not None:
+            torch.cuda.set_stream(self._learn_stream)
+        while not self._learner_stop.is_set():
+            if not any([self._ens_update(m) for m in range(self.cfg.n_groups)]):
+                time.sleep(0.05)
+
+    @torch.no_grad()
+    def _sync_acting(self):
+        """Broadcast the learner's current weights to the copies the rollouts act with."""
+        with self._param_lock:
+            if self._learn_stream is not None:
+                self._learn_stream.synchronize()
+            for src, dst in zip(self.ensembles, self.act_ensembles):
+                for ps, pd in zip(src.parameters(), dst.parameters()):
+                    pd.copy_(ps)
 
     # -------------------------------------------------------------- rollouts
     def _items(self, particles) -> list[RolloutItem]:
@@ -224,23 +272,26 @@ class GoWU:
         t = 0
         while running:
             obs = torch.from_numpy(self.pool.obs[running, :4]).to(self.device).float().div_(255.0)
-            a_sel = np.empty(len(running), np.int64)
+            grp = np.array(running) // N
+            a_gpu = torch.empty(len(running), dtype=torch.long, device=self.device)
             with torch.no_grad():
-                for m in {p // N for p in running}:
-                    ks = [k for k, p in enumerate(running) if p // N == m]
+                for m in np.unique(grp):
+                    ks = np.nonzero(grp == m)[0]
+                    mem = torch.from_numpy(np.array(running)[ks] % N).to(self.device)
+                    ks_t = torch.from_numpy(ks).to(self.device)
                     x = torch.zeros(1, N, 4, 84, 84, device=self.device)
-                    for k in ks:
-                        x[0, running[k] % N] = obs[k]
-                    q = self.ensembles[m](x)[0]  # (N, A)
-                    for k in ks:
-                        qk = q[running[k] % N]
-                        best = torch.nonzero(qk == qk.max()).flatten().cpu().numpy()
-                        a_sel[k] = self.rng.choice(best)
+                    x[0, mem] = obs[ks_t]
+                    q = self.act_ensembles[m](x)[0][mem]                 # (k, A): member p mod N
+                    tie = q == q.max(1, keepdim=True).values
+                    # argmax with ties broken uniformly at random
+                    a_gpu[ks_t] = torch.where(tie, torch.rand_like(q), -1.0).argmax(1)
+            a_sel = a_gpu.cpu().numpy()
             rand = self.rng.random(len(running)) < cfg.ensemble_eps
             a_sel[rand] = self.rng.integers(0, self.n_actions, rand.sum())
-            for m in {p // N for p in running}:
-                ks = [k for k, p in enumerate(running) if p // N == m]
-                self.replays[m].add(self.pool.obs[[running[k] for k in ks], :4], a_sel[ks])
+            with self._replay_lock:
+                for m in np.unique(grp):
+                    ks = np.nonzero(grp == m)[0]
+                    self.replays[m].add(self.pool.obs[np.array(running)[ks], :4], a_sel[ks])
             r, ll, go, rams = self.pool.step(running, a_sel)
             nxt = []
             for k, p in enumerate(running):
@@ -266,6 +317,7 @@ class GoWU:
         cfg = self.cfg
         particles = [p for m in active_groups for p in self.group(m)]
         if cfg.particle_policy == "ensemble":
+            self._sync_acting()
             self._train(0)
             results = self._rollout_ensemble(particles)
             steps = sum(r.n_steps for r in results)
@@ -282,7 +334,8 @@ class GoWU:
             for m in active_groups:
                 frames = np.concatenate([self.pool.traj[r.env, :r.n_steps] for r in results
                                          if r.env // cfg.n_particles == m])
-                self.replays[m].add(frames)
+                with self._replay_lock:
+                    self.replays[m].add(frames)
                 new.append(frames)
             new = np.concatenate(new)
             sub = new[self.rng.choice(len(new), min(512, len(new)), replace=False)]
@@ -444,7 +497,7 @@ class GoWU:
             rollbacks=s["rollbacks"], deaths=s["deaths"], exploits=s["exploits"],
             death_rate=round(s["deaths"] / max(s["rollouts"], 1), 3),
             rnd_loss=round(s["rnd_loss"] / max(s["rnd_n"], 1), 5),
-            rnd_updates_total=s["rnd_updates_total"],
+            rnd_updates_total=s["rnd_updates_total"], ens_updates_total=self.ens_updates_total,
             global_U=float(self.score([self.global_winner])[0]),
             global_winner_in_population=any(n is self.global_winner for n in self.nodes),
             gw_ram=self.global_winner.ram)
@@ -503,6 +556,9 @@ class GoWU:
                     self.save_demo()
                     self._last_save = time.time()
         finally:
+            self._learner_stop.set()
+            if self._learner is not None:
+                self._learner.join(timeout=30)
             self.save_demo()
             self.log()
             self.pool.close()

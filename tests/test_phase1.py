@@ -2,6 +2,7 @@ import gzip
 import pickle
 
 import numpy as np
+import torch
 import pytest
 
 from gowu.atari import AtariEnv
@@ -131,3 +132,15 @@ def test_gowu_runs_and_demo_is_consistent(tmp_path, policy):
     e = AtariEnv(seed=1)
     for ck in demo["ckpts"]:
         e.restore(ck)
+
+
+def test_async_ensemble_learner_trains_and_broadcasts(tmp_path):
+    cfg = GowuConfig(n_groups=2, n_particles=4, outer_steps=(2, 3), total_frames=10**9, max_iters=4,
+                     n_workers=2, device="cpu", out_dir=str(tmp_path), particle_policy="ensemble",
+                     replay_capacity=5000, save_every_sec=1e9, ens_batch=16)
+    g = GoWU(cfg)
+    g.run(verbose=False)
+    assert g.ens_updates_total > 0          # the learner thread trained while rollouts ran
+    g._sync_acting()
+    for src, dst in zip(g.ensembles, g.act_ensembles):
+        assert all(torch.equal(a, b) for a, b in zip(src.parameters(), dst.parameters()))
