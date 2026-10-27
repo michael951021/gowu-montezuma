@@ -46,7 +46,7 @@ descendant references them (ref counts). Demo = path from root to the highest-re
 | MSE to the target embedding | `error()` = mean squared difference | same |
 | trained on all M groups' replay buffers | `sample_across(self.replays, ...)` | same |
 | Adam 3e-4, batch 128 | config `rnd_lr`, `rnd_batch` | same |
-| asynchronous learner, rate not given | 8 updates / 1k agent steps, overlapped with rollouts | **D2** |
+| asynchronous learner; v4: ~0.77M SGD steps by 100M frames | 31 updates / 1k agent steps (config), overlapped with rollouts | same since 2026-10-27 (was 8: **D2**) |
 
 ## Replay (Sec. 5.1) — `gowu/replay.py`
 
@@ -58,7 +58,8 @@ the action was chosen (corrected 2026-10-21). Same.
 | Paper | Code | |
 |---|---|---|
 | headline: per-particle zero-target network f(s, a), Nature torso + 512, masked MSE to 0, argmax with ε = 0.2, ties random; member = particle index mod N; per-group data only; Muon 1e-4, batch 128 | `particle_policy: ensemble`: `EnsembleQ` (grouped convs), same loss, ε = 0.2, ties random, member p mod N, per-group replay, **Adam** 1e-4, batch 128 | **D1** (not the default so far) |
-| ablation (Fig. 6b, "on par"): one random action per particle held for the inner-step block | `particle_policy: hold_random` (default in all runs so far) | **D1** |
+| ablation (Fig. 6b, "on par"): one random action per particle held for the inner-step block | `particle_policy: hold_random` | **D1** |
+| arXiv v4 (2026-05-13), main runs: the held random action, with ε = 0.2 per step; no ensemble | `particle_policy: hold_random`, `particle_eps: 0.2` | **default since 2026-10-27** |
 
 ## Environment (Sec. 6.1, App. C.1) — `gowu/atari.py`
 

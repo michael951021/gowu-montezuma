@@ -16,3 +16,4 @@ replay_capacity: 128000
 n_workers: 14                # 16-core box: leave 2 cores for the coordinator/learner
 device: cuda
 out_dir: runs/gowu_mr
+rnd_updates_per_1k_steps: 31     # arXiv v4: ~0.77M RND SGD steps by 100M frames
