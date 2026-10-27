@@ -214,8 +214,8 @@ class LRGoWU:
         self.n_rollbacks = 0
         self.n_consolidations = 0
         self.n_exploits = 0
-        self.rooms_seen: set = set()
         self.max_episode_R = 0.0
+        self._tm = dict(pol=0.0, env=0.0, post=0.0, ppo=0.0, bc=0.0, rnd=0.0)
         self._log = open(os.path.join(cfg.out_dir, "log.jsonl"), "a")
         self._last_save = time.time()
 
@@ -463,7 +463,9 @@ class LRGoWU:
         done = np.zeros((T, E), np.float32)
         valid = np.zeros((T, E), bool)
         all_ids = np.arange(E)
+        tm = self._tm
         for t in range(T):
+            t0 = time.perf_counter()
             acts = self._explore_actions()
             ret = self.phase == RETURN
             pol = ret | ((self.phase == EXPLORE) & (cfg.explore_policy == "goal_explore"))
@@ -487,10 +489,14 @@ class LRGoWU:
                 buf_scale[t, rid] = scale[rmt]
                 buf_v[t, ids[rm]] = v[rmt].cpu().numpy()
                 valid[t, ids[rm]] = True
+            t1 = time.perf_counter()
+            tm["pol"] += t1 - t0
             self.steps_return += int(ret.sum())
             self.steps_explore += int(E - ret.sum())
             r, ll, go, rams = self.pool.step(all_ids, acts)
             self.agent_steps += E
+            t2 = time.perf_counter()
+            tm["env"] += t2 - t1
             rew[t], done[t], trunc, resets = self._post_step(acts, r, ll, go, rams)
             if len(trunc):   # time-limit truncation of the return phase: bootstrap from s_{t+1}
                 _, v_last = self._forward(torch.from_numpy(self._x(trunc, self.goal[trunc])).to(dev),
@@ -505,6 +511,7 @@ class LRGoWU:
                     self._begin_episode(i, rr[i])
             if self.updates < 50 or t % 4 == 0:
                 self.rnd.norm.update(torch.from_numpy(self.pool.obs[:, 3]).to(dev)[:, None])
+            tm["post"] += time.perf_counter() - t2
         # bootstrap the rollout boundary for envs still returning
         v_next = np.zeros(E, np.float32)
         ids = np.where(valid[-1] & (done[-1] == 0))[0]
@@ -546,21 +553,20 @@ class LRGoWU:
 
         slots = np.array([arch.slot(rams[i]) for i in range(E)])
         self.ep_slots[rows, tn] = slots
-        for i in range(E):
-            ram = rams[i]
-            self.rooms_seen.add((ram[0], ram[1]))
 
         # uncertainty: current states and the incumbents they tie with (re-scored with the current RND)
-        tie = np.array([arch.exists(s) and arch.R[s] == self.R[i] and not dead[i] for i, s in enumerate(slots)])
-        tie_slots = np.unique(slots[tie])
+        Rs = arch.R[slots]
+        tie_slots = np.unique(slots[(Rs == self.R) & ~dead])
         u_all = self._u(np.concatenate([frames, arch.frames[tie_slots]]))
         U = u_all[:E]
         arch.U[tie_slots] = u_all[E:]
 
-        # archive updates and hindsight arrivals
-        for i in np.where(~dead)[0]:
+        # archive updates (lex-max (R, U) per cell) and hindsight arrivals; only flagged envs are visited
+        cand = ~dead & ((Rs < self.R) | ((Rs == self.R) & (U > (1 + arch.u_margin) * arch.U[slots])))
+        moved = ~dead & ((slots != self.slot) | rewarded)
+        for i in np.where(cand | moved)[0]:
             s = int(slots[i])
-            if arch.is_candidate(s, self.R[i], U[i]):
+            if cand[i] and arch.is_candidate(s, self.R[i], U[i]):   # re-check: envs can share a cell
                 prev = int(self.slot[i])
                 parent = prev if prev != s and arch.exists(prev) else None
                 kind = arch.update(s, float(self.R[i]), float(U[i]), frames[i], rams[i], parent, self.agent_steps)
@@ -589,27 +595,31 @@ class LRGoWU:
         self.slot = slots
         self.prev_ram = rams
 
-        rew = np.zeros(E, np.float32)
+        ret = self.phase == RETURN
+        reached = ret & (slots == self.goal) & (self.R >= self.goal_R) & ~dead
+        rew = np.where(ret, cfg.c_ext * np.sign(r) + cfg.c_anc * n_anc - cfg.c_step + cfg.c_goal * reached,
+                       0.0).astype(np.float32)
         done = np.zeros(E, np.float32)
-        trunc, resets = [], []
         ring_full = tn >= cfg.max_episode_steps
-        for i in range(E):
-            if self.phase[i] == RETURN:
-                reached = slots[i] == self.goal[i] and self.R[i] >= self.goal_R[i] and not dead[i]
-                rew[i] = (cfg.c_ext * np.sign(r[i]) + cfg.c_anc * n_anc[i] - cfg.c_step
-                          + cfg.c_goal * reached)
+        ret_fail = ret & ((tn - self.t_phase >= self.timeout) | (tn - self.last_progress >= cfg.ret_stall)
+                          | ring_full | ret_fail_life)
+        exp_end = ~ret & ((tn - self.t_phase >= cfg.explore_max_steps) | (tn - self.last_improve >= cfg.explore_stall)
+                          | ring_full)
+        flagged = dead | reached | ret_fail | exp_end
+        if cfg.explore_policy == "goal_explore":
+            flagged |= ~ret & (((slots == self.goal) & (self.R >= self.goal_R))
+                               | ((tn - self.t_phase) % cfg.goal_explore_every == 0))
+        trunc, resets = [], []
+        for i in np.where(flagged)[0]:
+            if ret[i]:
                 if dead[i]:
                     done[i] = 1
                     self._handoff_fail_dead(i)
                     resets.append(i)
-                    continue
-                if reached:
+                elif reached[i]:
                     done[i] = 1
                     self._handoff(i, success=True)
-                    continue
-                t_ret = tn[i] - self.t_phase[i]
-                if (t_ret >= self.timeout[i] or tn[i] - self.last_progress[i] >= cfg.ret_stall
-                        or ring_full[i] or ret_fail_life[i]):
+                elif ret_fail[i]:
                     done[i] = 1
                     trunc.append(i)
                     self._handoff(i, success=False)
@@ -617,17 +627,13 @@ class LRGoWU:
                         resets.append(i)
                         self._end_episode(i, died=False)
                 continue
-            # explore phase
             if dead[i]:
                 self._end_episode(i, died=True)
                 resets.append(i)
-            elif (tn[i] - self.t_phase[i] >= cfg.explore_max_steps or tn[i] - self.last_improve[i] >= cfg.explore_stall
-                  or ring_full[i]):
+            elif exp_end[i]:
                 self._end_episode(i, died=False)
                 resets.append(i)
-            elif cfg.explore_policy == "goal_explore" and (
-                    (slots[i] == self.goal[i] and self.R[i] >= self.goal_R[i])
-                    or (tn[i] - self.t_phase[i]) % cfg.goal_explore_every == 0):
+            else:
                 self._set_goal(i, self._sample(cfg.mix_rule))
         return rew, done, np.array(trunc, np.int64), resets
 
@@ -887,7 +893,8 @@ class LRGoWU:
                    rnd_loss=round(rnd_loss, 6) if rnd_loss is not None else None,
                    demos=len(arch.demos), demo_gb=round(arch.demo_bytes / 2**30, 2),
                    rollbacks=self.n_rollbacks, consolidations=self.n_consolidations, exploits=self.n_exploits,
-                   rooms_list=rooms, **st)
+                   rooms_list=rooms, timing={k: round(v, 2) for k, v in self._tm.items()}, **st)
+        self._tm = {k: 0.0 for k in self._tm}
         self._log.write(json.dumps(rec) + "\n")
         self._log.flush()
         return rec
@@ -919,10 +926,17 @@ class LRGoWU:
                     break
                 steps0 = self.agent_steps
                 b = self.collect()
+                t0 = time.perf_counter()
                 st = self._ppo(b)
                 del b
+                t1 = time.perf_counter()
                 st.update(self._bc())
+                t2 = time.perf_counter()
                 self._train_rnd(self.agent_steps - steps0)
+                tm = self._tm
+                tm["ppo"] += t1 - t0
+                tm["bc"] += t2 - t1
+                tm["rnd"] += time.perf_counter() - t2
                 self.updates += 1
                 rec = self.log(st)
                 if verbose and self.updates % cfg.print_every == 0:
