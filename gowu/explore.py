@@ -52,7 +52,7 @@ class GowuConfig:
     rnd_updates_per_1k_steps: float = 8.0    # learner/actor ratio; ~1 pass over each frame (paper: async, unspecified)
     ens_lr: float = 1e-4
     ens_batch: int = 128
-    ens_updates_per_1k_steps: float = 4.0    # used only when ens_async is False
+    ens_updates_per_1k_steps: float = 0.5    # per group; paper: async, rate unspecified. Caps the async learner too
     ens_async: bool = True               # paper App. F.3: learner trains continuously, rollouts use broadcast weights
     replay_capacity: int = 128_000       # per group
     # exploit guard (App. H)
@@ -122,8 +122,7 @@ class GoWU:
         if self.ensembles is not None:
             self._sync_acting()
             if cfg.ens_async:
-                self._learner = threading.Thread(target=self._ens_learner_loop, daemon=True)
-                self._learner.start()
+                self._learner = threading.Thread(target=self._ens_learner_loop, daemon=True)  # started in run()
 
         # population + tree
         self.pool.reset(range(self.P))
@@ -212,9 +211,10 @@ class GoWU:
             act, mask = rep.act[idx].copy(), rep.mask[idx].copy()
         x = torch.from_numpy(obs).to(self.device).float().div_(255.0)
         x = x[:, None].expand(-1, ens.n, -1, -1, -1)
-        q = ens(x)                                                # (B, n, A)
+        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+            q = ens(x)                                            # (B, n, A)
         a = torch.from_numpy(act).to(self.device)
-        qa = q.gather(2, a[:, None, None].expand(-1, ens.n, 1)).squeeze(-1)
+        qa = q.float().gather(2, a[:, None, None].expand(-1, ens.n, 1)).squeeze(-1)
         msk = torch.from_numpy(mask).to(self.device)
         loss = (msk * qa.pow(2)).mean()                           # zero target (App. E.1)
         opt.zero_grad(set_to_none=True)
@@ -228,9 +228,12 @@ class GoWU:
         """Asynchronous learning node (Sec. 5.1, App. F.3): train every group's ensemble continuously."""
         if self._learn_stream is not None:
             torch.cuda.set_stream(self._learn_stream)
+        rate = self.cfg.ens_updates_per_1k_steps * self.cfg.n_groups / 1000
         while not self._learner_stop.is_set():
-            if not any([self._ens_update(m) for m in range(self.cfg.n_groups)]):
-                time.sleep(0.05)
+            # Continuous, but capped at `rate` updates per agent step so it cannot starve the rollouts.
+            if self.ens_updates_total >= self.agent_steps * rate or \
+                    not any([self._ens_update(m) for m in range(self.cfg.n_groups)]):
+                time.sleep(0.01)
 
     @torch.no_grad()
     def _sync_acting(self):
@@ -542,6 +545,8 @@ class GoWU:
 
     def run(self, verbose: bool = True):
         cfg = self.cfg
+        if self._learner is not None and not self._learner.is_alive():
+            self._learner.start()
         try:
             while self.frames < cfg.total_frames and (cfg.max_iters is None or self.iteration < cfg.max_iters):
                 self.iterate()

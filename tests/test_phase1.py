@@ -137,7 +137,8 @@ def test_gowu_runs_and_demo_is_consistent(tmp_path, policy):
 def test_async_ensemble_learner_trains_and_broadcasts(tmp_path):
     cfg = GowuConfig(n_groups=2, n_particles=4, outer_steps=(2, 3), total_frames=10**9, max_iters=4,
                      n_workers=2, device="cpu", out_dir=str(tmp_path), particle_policy="ensemble",
-                     replay_capacity=5000, save_every_sec=1e9, ens_batch=16)
+                     replay_capacity=5000, save_every_sec=1e9, ens_batch=16,
+                     ens_updates_per_1k_steps=100)
     g = GoWU(cfg)
     g.run(verbose=False)
     assert g.ens_updates_total > 0          # the learner thread trained while rollouts ran
