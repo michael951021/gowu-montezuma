@@ -1,0 +1,21 @@
+# CPU smoke test: a few updates with a handful of envs.
+game: montezuma_revenge
+total_frames: 200000
+n_envs: 16
+n_groups: 4
+n_workers: 4
+unroll: 32
+max_episode_steps: 1500
+dense: 128
+head: 64
+bc_batch: 64
+n_bc: 2
+rnd_replay: 20000
+eval_episodes: 4
+eval_cap_frames: 2000
+eval_uncapped_limit_steps: 1000
+eval_loiter_steps: 300
+device: cpu
+amp: false
+print_every: 1
+out_dir: runs/lr_tiny

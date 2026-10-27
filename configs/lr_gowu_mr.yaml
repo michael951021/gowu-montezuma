@@ -1,0 +1,15 @@
+# LR-GoWU on Montezuma's Revenge (docs/PLAN_LR_GOWU.md defaults). No restoreState during training.
+game: montezuma_revenge
+total_frames: 2000000000
+n_envs: 128
+n_groups: 4
+n_workers: 14
+sticky_p: 0.25
+archive_key: room
+goal_encoder: frame
+select_rule: gowu_groups
+explore_policy: hold_random
+explore_eps: 0.2
+lives_mode: episode_end
+device: cuda
+out_dir: runs/lr_gowu_mr
