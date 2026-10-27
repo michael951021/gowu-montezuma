@@ -8,6 +8,7 @@ inner_steps: [5, 15]
 rollback: [1, 3]
 sticky_p: 0.25
 particle_policy: hold_random  # paper Fig. 6b: on par with the learned ensemble; `ensemble` = paper default
+exploit_mode: middle_room    # targeted RAM surrogate for App. H; no generic reward-repeat cutoff
 rnd_lr: 0.0003
 rnd_batch: 128
 replay_capacity: 128000

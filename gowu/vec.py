@@ -74,8 +74,11 @@ def _worker(remote, env_ids, env_kwargs, seeds, shm_names, shapes):
                         a = it.action if (it.eps <= 0 or rng.random() >= it.eps) else rng.integers(e.n_actions)
                         acts[t] = a
                         ram_before = e.ram_info()
+                        # Replay stores s_t, the state where the action was selected (Sec. 5.1),
+                        # including restored winners. Saving only s_{t+1} omits precisely those
+                        # reset states from RND training and can leave their novelty inflated.
+                        traj[it.env, t] = e.frames[-1]
                         frames, r, life_lost, game_over = e.step(int(a))
-                        traj[it.env, t] = frames[-1]
                         n = t + 1
                         if r != 0:
                             total += r

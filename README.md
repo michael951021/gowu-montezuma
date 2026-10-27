@@ -29,6 +29,11 @@ python scripts/summarize.py runs/gowu_mr_s* --plot phase1.png
 ```
 Any config field can be overridden: `--set seed=3 particle_policy=ensemble curriculum.window=10`.
 
+For the four-seed phase-I-only validation, see `docs/PHASE1_VALIDATION.md`. Its queued entry point is
+`scripts/validate_phase1.py`; it includes an independent watchdog, early failure gates, frozen source
+and periodic reports. The default middle-room exploit filter is a targeted RAM surrogate for the
+paper's unreleased visual detector, not a claim of exact detector equivalence.
+
 ## What healthy looks like
 - **Phase I** (`runs/*/log.jsonl`, stdout): `best_R` hits 100 (key) within ~1M frames and 400+
   (doors) soon after. `rooms` and `max_level` keep growing. `death_rate` stays around 0.3–0.5.

@@ -53,7 +53,7 @@ class AtariEnv:
         self.stack = stack
         self.is_mr = game == "montezuma_revenge"
         h, w = self.ale.getScreenDims()
-        self._raw = [np.empty((h, w), np.uint8), np.empty((h, w), np.uint8)]
+        self._raw = [np.empty((h, w, 3), np.uint8), np.empty((h, w, 3), np.uint8)]
         self.frames = np.zeros((stack, OBS_HW, OBS_HW), np.uint8)
         self.last_reward_frame = np.zeros((OBS_HW, OBS_HW), np.uint8)
         self.lives = 0
@@ -61,8 +61,10 @@ class AtariEnv:
 
     # ------------------------------------------------------------------ core
     def _grab(self) -> np.ndarray:
+        # App. C.1: pool RGB first. Grayscale conversion does not commute with max pooling.
         pooled = np.maximum(self._raw[0], self._raw[1])
-        return cv2.resize(pooled, (OBS_HW, OBS_HW), interpolation=cv2.INTER_LINEAR)
+        gray = cv2.cvtColor(pooled, cv2.COLOR_RGB2GRAY)
+        return cv2.resize(gray, (OBS_HW, OBS_HW), interpolation=cv2.INTER_LINEAR)
 
     def _push(self, frame: np.ndarray) -> None:
         self.frames[:-1] = self.frames[1:]
@@ -70,7 +72,7 @@ class AtariEnv:
 
     def reset(self) -> np.ndarray:
         self.ale.reset_game()
-        self.ale.getScreenGrayscale(self._raw[0])
+        self.ale.getScreenRGB(self._raw[0])
         self._raw[1][:] = self._raw[0]
         f = self._grab()
         self.frames[:] = f
@@ -83,15 +85,19 @@ class AtariEnv:
         """Returns (frames, reward, life_lost, game_over). `frames` is a view; copy if you keep it."""
         act = self.actions[a]
         reward = 0.0
+        captured = 0
         for i in range(self.frame_skip):
             reward += self.ale.act(act)
             if i >= self.frame_skip - 2:
-                self.ale.getScreenGrayscale(self._raw[i - (self.frame_skip - 2)])
+                self.ale.getScreenRGB(self._raw[captured])
+                captured += 1
             if self.ale.game_over():
-                if i < self.frame_skip - 2:
-                    self.ale.getScreenGrayscale(self._raw[0])
-                    self._raw[1][:] = self._raw[0]
                 break
+        # Early termination must not pool a terminal frame with stale pre-restore pixels.
+        if captured == 0:
+            self.ale.getScreenRGB(self._raw[0])
+        if captured < 2:
+            self._raw[1][:] = self._raw[0]
         f = self._grab()
         self._push(f)
         if reward != 0:

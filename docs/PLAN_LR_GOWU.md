@@ -6,6 +6,36 @@ RND uncertainty), but it is not allowed to restore. Instead it trains a goal-con
 π_R that walks from the true initial state s0 to a chosen landmark. It then hands control to an
 **explore policy** π_E. This is a "learned replay": π_R plays the role of `restoreState`.
 
+## Current execution status — 2026-10-22
+
+**Full-budget check stopped early; reproduction remains unvalidated.** The queued
+`phase1-full-replay-20261022` campaign ran for about 26 minutes, then its prescribed
+100M-frame gate stopped both seeds: seed 0 scored 14,400, seed 1 scored 10,600
+(pair mean 12,500, below the 20,000 floor). Final frame counts were 104.6M/102.0M;
+neither seed reached 400M, and seeds 2/3 never started. The queue marked the job
+done because an intentional early stop successfully produces its report; this
+does not mean the scientific validation passed. GPUs were released and the
+model server restored. See the [full-check summary](../runs/phase1_full_replay_20261022/summary.json).
+The earlier diagnostic's 43,400 score did not recur in this fresh run; the
+algorithm's plateau and run-to-run reproducibility need further diagnosis.
+
+The active milestone is **M0 / B0a: validate GoWU phase I**, before implementing or
+evaluating LR-GoWU. The controlled replay-fix diagnostic finished at 100M frames:
+seeds 0/1 scored 13,600/43,400, mean 28,500; only seed 1 reached level 2. This is
+partial improvement, not a successful reproduction. See the
+[diagnostic comparison](../runs/diagnosis/COMPARISON.md).
+
+The user authorized a fresh full-budget check: **seeds 0–3 × 400M game frames**,
+two at a time on the two RTX 3090s, using the corrected pre-action replay and
+unchanged hyperparameters. Central queue project/job:
+`gowu-validation:phase1-full-replay-20261022`. Output:
+`runs/phase1_full_replay_20261022/`. Health checks run every 30 seconds, with
+reports every 30 minutes and at frame milestones. Existing scientific and
+technical stop rules remain in force. Estimated training time is 4–6 hours
+after GPU acquisition, with a 12-hour ceiling. See the
+[phase-I validation protocol](PHASE1_VALIDATION.md) for gates and limitations.
+Later milestones remain planned; this job runs phase I only.
+
 > ⚠️ **EPISODE CAP NOTE — READ ME.** All LR-GoWU evaluation in this plan uses the standard ALE protocol:
 > sticky actions p = 0.25, the full 18-action set, all lives, and a **108,000-frame (27,000 agent step) cap**.
 > **GoWU's reported numbers do NOT use this cap.** Their evaluator lets episodes run past the normal

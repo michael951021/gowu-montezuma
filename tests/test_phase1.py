@@ -8,6 +8,53 @@ from gowu.atari import AtariEnv
 from gowu.exploit_guard import ExploitGuard
 from gowu.explore import GoWU, GowuConfig
 from gowu.tree import LineageTree
+from gowu.vec import EnvPool, RolloutItem
+
+
+def test_rgb_pooling_precedes_grayscale():
+    # The paper's RGB pooling retains both channels; grayscale-first loses the red maximum.
+    e = AtariEnv.__new__(AtariEnv)
+    a = np.zeros((210, 160, 3), np.uint8)
+    b = np.zeros_like(a)
+    a[..., 0], b[..., 1] = 255, 255
+    e._raw = [a, b]
+    out = e._grab()
+    assert out.shape == (84, 84) and out.dtype == np.uint8
+    assert np.all(out == 226)
+
+
+def test_replay_includes_restored_state_before_first_action():
+    pool = EnvPool(1, 1, 16, dict(sticky_p=0.0), max_rollout_steps=5)
+    try:
+        pool.reset([0])
+        start = pool.obs[0, 3].copy()
+        ck = pool.checkpoint([0])[0]
+        pool.rollout([RolloutItem(0, None, 12, 5)])
+        assert np.array_equal(pool.traj[0, 0], start)
+        # Restore a different state from the current endpoint: its first replay observation
+        # must be the reset target, not a frame produced AFTER leaving it.
+        pool.rollout([RolloutItem(0, ck, 11, 5)])
+        assert np.array_equal(pool.traj[0, 0], start)
+        assert not np.array_equal(pool.obs[0, 3], start)
+    finally:
+        pool.close()
+
+
+def test_targeted_guard_rejects_first_bug_reward_but_allows_normal_rewards():
+    g = ExploitGuard()
+    # (level, room, raw x, raw y, inventory); screen y = 308 - raw y.
+    before = (0, 5, 116, 180, 8)
+    after = (0, 5, 111, 174, 0)
+    assert g.check({}, [(0, 300.0, before, after)])[0]
+    # A legitimate opening below the same platform consumes a key too.
+    assert not g.check({}, [(0, 300.0, (0, 5, 109, 155, 8), (0, 5, 106, 155, 0))])[0]
+    assert not g.check({}, [(0, 300.0, (0, 1, 116, 180, 8), (0, 1, 111, 174, 0))])[0]
+    assert not g.check({}, [(0, 300.0, (0, 5, 116, 180, 32), after)])[0]  # sword, not key
+    assert not g.check({}, [(0, 300.0, before, (0, 5, 111, 174, 8))])[0]
+    counts = {}
+    for _ in range(40):
+        bad, counts = g.check(counts, [(0, 1000.0, before, before)])
+        assert not bad  # no blanket cap on normal treasure/repeated rewards
 
 
 def test_restore_is_exact_without_sticky():

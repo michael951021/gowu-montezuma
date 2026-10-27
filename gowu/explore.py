@@ -54,7 +54,7 @@ class GowuConfig:
     ens_updates_per_1k_steps: float = 4.0
     replay_capacity: int = 128_000       # per group
     # exploit guard (App. H)
-    exploit_mode: str = "loop"
+    exploit_mode: str = "middle_room"
     exploit_max_repeats: int = 3
     exploit_rules: list = field(default_factory=list)
     # infra
@@ -124,11 +124,12 @@ class GoWU:
         self.iteration = 0
         self.t0 = time.time()
         self.rooms_seen: set = {(ram[0], ram[1])}
-        self.stats = dict(rollbacks=0, deaths=0, rollouts=0, exploits=0, rnd_loss=0.0, rnd_n=0)
+        self.stats = dict(rollbacks=0, deaths=0, rollouts=0, exploits=0, rnd_loss=0.0, rnd_n=0, rnd_updates_total=0)
         self._upd_carry = {"rnd": 0.0, "ens": 0.0}
         self._log = open(os.path.join(cfg.out_dir, "log.jsonl"), "a")
         self._events = open(os.path.join(cfg.out_dir, "reward_events.jsonl"), "a")
         self._last_save = time.time()
+        self._audit_count = 0
         # warm up the RND normaliser with the start state (Burda et al. use random-agent data)
         self.rnd.norm.update(self._rnd_input_nodes([root] * 8))
 
@@ -169,6 +170,7 @@ class GoWU:
                 self.rnd_opt.zero_grad(set_to_none=True)
                 loss.backward()
                 self.rnd_opt.step()
+                self.stats["rnd_updates_total"] += 1
                 self.stats["rnd_loss"] += loss.item()
                 self.stats["rnd_n"] += 1
         if self.ensembles is None:
@@ -300,6 +302,20 @@ class GoWU:
                 for (t, r, rb, ra) in res.reward_events:
                     self._events.write(json.dumps(dict(it=self.iteration, frames=self.frames, p=p, R=parent.R + r,
                                                        r=r, ram_before=rb, ram_after=ra, exploit=exploit)) + "\n")
+                    # Preserve every early room-5 key-consumption example, INCLUDING accepted ones,
+                    # so false positives/negatives of the RAM surrogate can be reviewed visually.
+                    if (self._audit_count < 64 and rb[1] == ra[1] == 5 and r > 0
+                            and (int(ra[4]) & 0x1E).bit_count() < (int(rb[4]) & 0x1E).bit_count()):
+                        self._audit_count += 1
+                        audit_dir = os.path.join(cfg.out_dir, "exploit_audit")
+                        os.makedirs(audit_dir, exist_ok=True)
+                        base = os.path.join(audit_dir, f"event{self._audit_count:03d}")
+                        import cv2
+                        frames4 = self.pool.obs[p, :4].transpose(1, 0, 2).reshape(84, 4 * 84)
+                        cv2.imwrite(base + ".png", frames4)
+                        with gzip.open(base + ".pkl.gz", "wb") as f:
+                            pickle.dump(dict(parent=parent.ckpt, endpoint=res.ckpt, actions=res.actions,
+                                             ram_before=rb, ram_after=ra, reward=r, exploit=exploit), f)
                 if exploit:
                     dead = True
                     self.stats["exploits"] += 1
@@ -428,6 +444,9 @@ class GoWU:
             rollbacks=s["rollbacks"], deaths=s["deaths"], exploits=s["exploits"],
             death_rate=round(s["deaths"] / max(s["rollouts"], 1), 3),
             rnd_loss=round(s["rnd_loss"] / max(s["rnd_n"], 1), 5),
+            rnd_updates_total=s["rnd_updates_total"],
+            global_U=float(self.score([self.global_winner])[0]),
+            global_winner_in_population=any(n is self.global_winner for n in self.nodes),
             gw_ram=self.global_winner.ram)
         self._log.write(json.dumps(rec) + "\n")
         self._log.flush()

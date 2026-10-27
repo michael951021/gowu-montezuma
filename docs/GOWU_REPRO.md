@@ -20,7 +20,7 @@ because no official code is public as of 2026-10.
 
 | component | paper | here | status |
 |---|---|---|---|
-| Preprocessing | max-pool last 2 of 4 frames, gray, 84×84 bilinear, stack 4 | same (ALE grayscale palette, then max-pool) | ✅ |
+| Preprocessing | max-pool last 2 of 4 RGB frames, gray, 84×84 bilinear, stack 4 | RGB max-pool, OpenCV luminosity grayscale, bilinear resize | ✅ corrected 2026-10-20 |
 | Sticky actions / action set | 0.25 / full 18 | same | ✅ |
 | Dead state | life loss (discount 0) | `ale.lives()` decrease, or game over | ✅ |
 | Lineage tree | node = (checkpoint, R, parent); prune unreferenced | same, with refcounts; nodes also store rollout actions + RAM | ✅ (+) |
@@ -32,7 +32,7 @@ because no official code is public as of 2026-10.
 | Uncertainty freshness | live estimator | every winner comparison re-scores U with the current RND | ✅ |
 | Particle policy | bootstrapped zero-target ensembles, ε = 0.2, Muon 1e-4 | `ensemble` implemented (Adam, because Muon needs 2-D weights). **Default `hold_random`** (one random action held per inner-step block), which the paper's Fig. 6b shows is "on par" | ⚠️ default = ablation variant |
 | Replay | 128k / group, bootstrap masks | same | ✅ |
-| Middle-room bug guard | visual detector (unreleased reference crops) | RAM-based: `loop` guard (same (level, room, reward) > 3 times in a lineage → dead) + explicit `exploit_rules`. All reward events are logged to `reward_events.jsonl` to find the exact signature | ⚠️ approximation |
+| Middle-room bug guard | visual detector (unreleased reference crops) | `middle_room`: first positive-reward key loss at room 5's upper right door; no generic repeat cutoff. Accepted/rejected examples saved for visual audit. See `PHASE1_VALIDATION.md` | ⚠️ targeted RAM surrogate; real-trajectory sensitivity not yet established |
 | Demo extraction | highest-reward leaf → root path | best-R node (earliest), checkpoints every 5–15 steps | ✅ |
 | Phase II segmentation | ≤ 10 segments at reward events, curriculum may go past the segment start | same | ✅ |
 | Curriculum | Δ = 25, dec (0.25, 0.75), inc (0.5, 1.0), S_req 0.2, begin 0.95, N_update 32, ε_tol 0, μ = 2, b = 500, EMA 0.9, extra ≈ e^U(0,7) steps | same. Δ is in **demo-node** units (unit not given) | ⚠️ unit assumption |
@@ -56,9 +56,8 @@ Expected on the 16-core / 2× 3090 box (estimates):
 
 ## Known open questions
 
-1. Whether GoWU blocks the **treasure-room** loop during exploration. Our `loop` guard does (> 3 repeats).
-2. The middle-room bug's exact RAM signature: check `reward_events.jsonl` of a long run for repeated
-   `(level, room, 300.0)` events with `exploit: true`, then add them to `exploit_rules` if wanted.
+1. Whether GoWU blocks the **treasure-room** loop during exploration. Our default no longer adds a blanket cutoff absent from the phase-I paper protocol.
+2. Validate the targeted middle-room surrogate on real accepted/rejected room-5 key-loss events in `exploit_audit/`; its geometry margins are our choices, not released author thresholds.
 3. The paper does not say whether the backward window Δ counts env steps or demo nodes.
 
 ## Smoke / directional results (laptop, 2026-10-20 — not the GPU box)
