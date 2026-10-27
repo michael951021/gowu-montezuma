@@ -1,0 +1,59 @@
+{
+  "_doc": "One entry per run family shown on the hub page (scripts/build_research_page.py). Add a new iteration as a NEW entry with its own arch/<id>.md snapshot; never edit a finished iteration's runs or arch file unless explicitly replacing it.",
+  "baselines": [
+    {
+      "id": "gowu-p1",
+      "label": "GoWU Phase I (ours)",
+      "kind": "gowu",
+      "date": "2026-10-27",
+      "commit": "3eb9614",
+      "about": "Our GoWU reproduction, paper v4 defaults, restores emulator states. Best trajectory found so far (not a deployable policy). Seeds 8/9 were stopped at 100M by the campaign's early-stop rule.",
+      "runs": [
+        {"seed": 6, "dir": "runs/big_v4_400m_20261027/seed6"},
+        {"seed": 7, "dir": "runs/big_v4_400m_20261027/seed7"},
+        {"seed": 8, "dir": "runs/big_v4_400m_20261027/seed8"},
+        {"seed": 9, "dir": "runs/big_v4_400m_20261027/seed9"}
+      ]
+    }
+  ],
+  "paper": {
+    "label": "GoWU Phase I (paper, Fig. 6 / Table 2)",
+    "points": [[50000000, 25000], [100000000, 52500], [200000000, 80000], [400000000, 98752.5]],
+    "note": "50M/100M/200M are midpoints of ranges read off Fig. 6 (20-30k, 45-60k, 75-85k); 400M is Table 2's mean over 100 seeds."
+  },
+  "iterations": [
+    {
+      "id": "v1-room",
+      "label": "LR v1 · room landmarks",
+      "date": "2026-10-27",
+      "commit": "4cd3aa0",
+      "arch": "v1",
+      "change": "First implementation. Plan default: one landmark per (level, room).",
+      "verdict": "π_R learns to fetch the key, but one landmark per room gives no foothold past it. Stuck at 100.",
+      "runs": [{"seed": 0, "dir": "runs/lr_test1c_20261027/a"}]
+    },
+    {
+      "id": "v1-xy",
+      "label": "LR v1 · cell landmarks",
+      "date": "2026-10-27",
+      "commit": "4cd3aa0",
+      "arch": "v1",
+      "change": "Finer landmarks: (level, room, #keys, x//16, y//16).",
+      "verdict": "Reachability-gate bug excluded every key landmark after 32 early failures; everything explored from the start. Stuck at 100.",
+      "runs": [{"seed": 0, "dir": "runs/lr_test1c_20261027/b"}]
+    },
+    {
+      "id": "v2",
+      "label": "LR v2 · gate fix",
+      "date": "2026-10-27",
+      "commit": "d33407c",
+      "arch": "v2",
+      "change": "Gate spares landmarks with demos; ineligible goals fall back to the nearest eligible ancestor; doomed gate needs 16 handoffs.",
+      "verdict": "6 rooms, 2,500 by ~35M frames and a robust policy (eval mean 2,350-2,500), then flat for 80M frames: 90% of frames go to return trips and random bursts can't clear the next room.",
+      "runs": [
+        {"seed": 0, "dir": "runs/lr_test2_20261027/a"},
+        {"seed": 1, "dir": "runs/lr_test2_20261027/b"}
+      ]
+    }
+  ]
+}
