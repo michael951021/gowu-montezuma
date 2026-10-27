@@ -41,6 +41,8 @@ class GowuConfig:
     outer_steps: tuple = (10, 20)        # [K_min, K_max]
     inner_steps: tuple = (5, 15)         # [T_min, T_max]
     rollback: tuple = (1, 3)             # [k_min, k_max]
+    # D3: count generations from the dead endpoint, so k = 1 is the rollout's start node (False: its parent)
+    rollback_from_start: bool = False
     sticky_p: float = 0.25
     # particle policy: hold_random (paper ablation, "on par") | ensemble (paper default) | random (fails)
     particle_policy: str = "hold_random"
@@ -49,6 +51,7 @@ class GowuConfig:
     # uncertainty (RND input = last frame, as in Burda et al.)
     rnd_lr: float = 3e-4
     rnd_batch: int = 128
+    rnd_norm_warmup_steps: int = 0       # D4: random-agent steps per env to initialise RND input normalisation
     rnd_updates_per_1k_steps: float = 8.0    # learner/actor ratio; ~1 pass over each frame (paper: async, unspecified)
     ens_lr: float = 1e-4
     ens_batch: int = 128
@@ -149,6 +152,21 @@ class GoWU:
         self._audit_count = 0
         # warm up the RND normaliser with the start state (Burda et al. use random-agent data)
         self.rnd.norm.update(self._rnd_input_nodes([root] * 8))
+        if cfg.rnd_norm_warmup_steps:
+            self._warmup_rnd_norm(cfg.rnd_norm_warmup_steps)
+
+    def _warmup_rnd_norm(self, steps: int):
+        """Burda et al. (2018): initialise the observation normaliser from a uniform-random agent, then restart.
+        The steps count toward the frame budget."""
+        envs = list(range(self.P))
+        for _ in range(steps):
+            _, _, over, _ = self.pool.step(envs, self.rng.integers(0, self.n_actions, self.P))
+            self.rnd.norm.update(torch.from_numpy(self.pool.obs[envs, 3]).to(self.device)[:, None])
+            if over.any():
+                self.pool.reset([e for e, o in zip(envs, over) if o])
+        self.agent_steps += steps * self.P
+        self.pool.restore([(p, self.nodes[p].ckpt) for p in envs])
+        self.dirty[:] = False
 
     # ----------------------------------------------------------- particles
     def _set(self, p: int, node: Node, dirty: bool = True):
@@ -402,7 +420,7 @@ class GoWU:
                 self.stats["rollbacks"] += 1
                 lo, hi = cfg.rollback
                 for p in g:
-                    k = int(self.rng.integers(lo, hi + 1))
+                    k = int(self.rng.integers(lo, hi + 1)) - int(cfg.rollback_from_start)
                     self._set(p, self.tree.ancestor(self.nodes[p], k))
                     self.dirty[p] = True
                 continue

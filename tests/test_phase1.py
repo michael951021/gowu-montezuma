@@ -1,6 +1,8 @@
 import gzip
 import pickle
 
+import zlib
+
 import numpy as np
 import torch
 import pytest
@@ -145,3 +147,24 @@ def test_async_ensemble_learner_trains_and_broadcasts(tmp_path):
     g._sync_acting()
     for src, dst in zip(g.ensembles, g.act_ensembles):
         assert all(torch.equal(a, b) for a, b in zip(src.parameters(), dst.parameters()))
+
+
+def test_rollback_from_start_counts_the_start_node_as_generation_one():
+    from gowu.tree import LineageTree
+    t = LineageTree()
+    root = t.make_root(None, (0, 1, 0, 0, 0), None)
+    a = t.add_child(root, None, 0.0, 5, b"", None, [], {}, None)
+    b = t.add_child(a, None, 0.0, 5, b"", None, [], {}, None)
+    # dead particle sits at its rollout start node b
+    assert t.ancestor(b, 1 - 1) is b       # rollback_from_start: k = 1 retries b itself
+    assert t.ancestor(b, 1) is a           # default: k = 1 is b's parent
+
+
+def test_rnd_norm_warmup_counts_frames_and_restores_root(tmp_path):
+    cfg = GowuConfig(n_groups=1, n_particles=4, total_frames=10**9, max_iters=1, n_workers=2, device="cpu",
+                     out_dir=str(tmp_path), rnd_norm_warmup_steps=20, save_every_sec=1e9)
+    g = GoWU(cfg)
+    assert g.agent_steps == 20 * 4
+    root_frames = np.frombuffer(zlib.decompress(g.tree.root.ckpt.frames), np.uint8).reshape(4, 84, 84)
+    assert all((g.pool.obs[p, :4] == root_frames).all() for p in range(4))
+    g.pool.close()
