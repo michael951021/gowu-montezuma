@@ -37,7 +37,7 @@
       "arch": "gowu-trapfix",
       "compare_to": "gowu-p1",
       "change": "Not in the paper: a winner confined to one room at the same R for 200 iterations marks those cells as dead states (room-8 rope-post trap).",
-      "verdict": "Running (400M, same seeds as the baseline).",
+      "verdict": "Fix fired once per seed in level-2 room 8 and both seeds escaped: level 3 reached at 213M / 134M (baseline: stuck at 34,200 / 39,200). ~71-72k when they first reached level 3's treasure room (302M / 252M); after that a treasure-room jewel loop (+1000 repeated, score wraps at 1,000,000) runs best R to the 999,100 cap. Everything above ~72k is the loop, not progress.",
       "runs": [
         {
           "seed": 6,
