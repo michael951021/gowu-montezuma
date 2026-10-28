@@ -125,6 +125,27 @@
         }
       ],
       "slot": 4
+    },
+    {
+      "id": "v2-resume",
+      "label": "LR v2 \u00b7 resumed",
+      "date": "2026-10-28",
+      "commit": "4856311",
+      "arch": "v2",
+      "slot": 6,
+      "compare_to": "v2",
+      "change": "Same v2 algorithm and config, continued from v2's ~122M-frame checkpoint (network, RND, landmark archive). Demos and optimizer moments rebuilt; 50-update lr warm-up.",
+      "verdict": "Running (2.5h).",
+      "runs": [
+        {
+          "seed": 0,
+          "dir": "runs/lr_v2_resume_20261028/a"
+        },
+        {
+          "seed": 1,
+          "dir": "runs/lr_v2_resume_20261028/b"
+        }
+      ]
     }
   ]
 }
