@@ -135,7 +135,7 @@
       "slot": 6,
       "compare_to": "v2",
       "change": "Same v2 algorithm and config, continued from v2's ~122M-frame checkpoint (network, RND, landmark archive). Demos and optimizer moments rebuilt; 50-update lr warm-up.",
-      "verdict": "Running (2.5h).",
+      "verdict": "Warm start held (no regression), but flat from 122M to ~250M: still 2,500 and the same 6 rooms; landmarks +9 / +1. Returns got better (success 82-96%, BC acc ~0.93) while policy entropy fell 0.65 -> 0.23. Eval mean 2,425 / 2,500. More frames alone don't help: the bottleneck is exploration past the handoff, not the return policy.",
       "runs": [
         {
           "seed": 0,
