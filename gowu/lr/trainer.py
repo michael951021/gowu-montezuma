@@ -26,7 +26,7 @@ from ..exploit_guard import ExploitGuard
 from ..nets import RND
 from ..replay import Replay
 from ..vec import EnvPool
-from .archive import RAM_GOAL_DIM, Archive, cell_key, ram_goal_vec
+from .archive import RAM_GOAL_DIM, Archive, Landmark, cell_key, ram_goal_vec
 from .net import GoalActorCritic
 
 RETURN, EXPLORE = 0, 1
@@ -38,6 +38,10 @@ class LRConfig:
     seed: int = 0
     total_frames: int = 2_000_000_000
     max_hours: float | None = None       # wall-clock training budget (evaluation runs after it)
+    # warm start from another run's out_dir: network, RND and landmark archive (with per-landmark stats).
+    # Not saved there, so rebuilt: demo trajectories (refilled by hindsight), optimizer moments, group goals.
+    resume_from: str | None = None
+    resume_warmup_updates: int = 50      # linear lr warm-up after a resume (Adam moments start from zero)
     n_envs: int = 128
     n_groups: int = 4                    # M; N = n_envs / M
     n_workers: int = 14
@@ -228,8 +232,56 @@ class LRGoWU:
         self.arch.update(root, 0.0, float(self._u(frame0[None])[0]), frame0, rams[0], None, 0)
         self.root = root
         self.group_goal = [root] * M
+        self._frames0 = 0
+        self._updates0 = None
+        if cfg.resume_from:
+            self._resume(cfg.resume_from)
         for i in range(E):
             self._begin_episode(i, rams[i])
+
+    def _resume(self, d):
+        ck = torch.load(os.path.join(d, "ckpt.pt"), map_location=self.device)
+        self.net.load_state_dict(ck["net"])
+        self.rnd.load_state_dict(ck["rnd"])
+        self.agent_steps = self._frames0 = ck["frames"] // 4
+        self.updates = self._updates0 = ck["updates"]
+        try:   # carry the return/explore frame split so cumulative shares stay comparable
+            with open(os.path.join(d, "log.jsonl")) as f:
+                last = json.loads(f.readlines()[-1])
+            self.steps_return, self.steps_explore = last["frames_return"] // 4, last["frames_explore"] // 4
+        except (OSError, ValueError, IndexError, KeyError):
+            pass
+        with open(os.path.join(d, "landmarks.json")) as f:
+            lms = json.load(f)
+        z = np.load(os.path.join(d, "landmark_frames.npz"))
+        old_frames = dict(zip(z["slots"].tolist(), z["frames"]))
+        old_live = sorted(old_frames)   # saved in arch.live() order, i.e. slot order
+        arch, c = self.arch, self.cfg.cell_xy
+        for k, lm in sorted(zip(old_live, lms), key=lambda t: t[1]["depth"]):
+            key = tuple(lm["key"])
+            ram = (key[0], key[1], key[-2] * c[0] + c[0] // 2, key[-1] * c[1] + c[1] // 2, 0)
+            s = arch.slot_of.get(key)
+            if s is None:
+                s = arch.slot_of[key] = len(arch.L)
+                arch.L.append(None)
+                arch.keys.append(key)
+                if s >= len(arch.R):
+                    n = 2 * len(arch.R)
+                    arch.R = np.concatenate([arch.R, np.full(n - len(arch.R), -np.inf)])
+                    arch.U = np.concatenate([arch.U, np.zeros(n - len(arch.U))])
+                    arch.frames = np.concatenate([arch.frames, np.zeros((n - len(arch.frames), 84, 84), np.uint8)])
+            parent = arch.slot_of.get(tuple(lm["parent"])) if lm["parent"] else None
+            L = Landmark(key, s, lm["R"], lm["U"], ram, parent, lm["depth"], lm["t_discovered"], lm["t_discovered"])
+            L.n_targeted, L.n_reached = lm["n_targeted"], lm["n_reached"]
+            L.n_handoff, L.n_quick_death, L.ret_len_ema = lm["n_handoff"], lm["n_quick_death"], lm["ret_len_ema"]
+            n_ok = round(lm["success"] * 64) if lm["n_targeted"] else 0
+            L.outcomes.extend([1.0] * n_ok + [0.0] * (64 - n_ok) if lm["n_targeted"] >= 64 else [])
+            arch.L[s] = L
+            arch.R[s], arch.U[s], arch.frames[s] = lm["R"], lm["U"], old_frames[k]
+        arch._chain_cache = {}
+        live = [s for s in arch.live() if self._eligible(s)]
+        best = lexbest(arch, live)
+        self.group_goal = [best] * self.cfg.n_groups
 
     # ------------------------------------------------------------- helpers
     @torch.no_grad()
@@ -888,7 +940,7 @@ class LRGoWU:
         self._rnd_loss = []
         best = lexbest(arch, live)
         rooms = sorted({(arch.keys[s][0], arch.keys[s][1]) for s in live})
-        rec = dict(update=self.updates, frames=self.frames, time=round(dt, 1), fps=round(self.frames / dt),
+        rec = dict(update=self.updates, frames=self.frames, time=round(dt, 1), fps=round((self.frames - 4 * self._frames0) / dt),
                    frames_return=self.steps_return * 4, frames_explore=self.steps_explore * 4,
                    n_landmarks=len(live), rooms=len(rooms), max_level=max(r[0] for r in rooms),
                    max_R=float(arch.R[live].max()), max_episode_R=self.max_episode_R,
@@ -935,6 +987,10 @@ class LRGoWU:
                 if deadline is not None and time.time() > deadline:
                     break
                 steps0 = self.agent_steps
+                if self._updates0 is not None and cfg.resume_warmup_updates:
+                    w = min(1.0, (self.updates - self._updates0 + 1) / cfg.resume_warmup_updates)
+                    for g in self.opt.param_groups:
+                        g["lr"] = cfg.lr * w
                 b = self.collect()
                 t0 = time.perf_counter()
                 st = self._ppo(b)
