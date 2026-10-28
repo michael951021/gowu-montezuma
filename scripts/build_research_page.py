@@ -310,7 +310,7 @@ def build(out: Path):
             s = gowu_series(d) if kind == "gowu" else lr_series(d)
             s.update(seed=r["seed"], dir=str(d), config=load_config(d))
             runs.append(s)
-        fams.append({**f, "kind": kind, "color": f"--s{k % 8 + 1}", "step": True, "runs": runs})
+        fams.append({**f, "kind": kind, "color": f"--s{((f.get('slot') or k + 1) - 1) % 8 + 1}", "step": True, "runs": runs})
 
     lr_max = max((r["rows"][-1][0] for f in fams if f["kind"] != "gowu" for r in f["runs"]), default=1e8)
     all_max = max(r["rows"][-1][0] for f in fams for r in f["runs"])
@@ -398,9 +398,13 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
 
     # ---- architecture pages
     (out / "arch").mkdir(exist_ok=True)
-    prev = None
+    byid = {f["id"]: f for f in fams}
+    last_of_kind = {}
     for f in fams:
-        if f["kind"] == "gowu" or not f.get("arch"):
+        # diff against `compare_to` if given, else the previous family of the same kind
+        prev = byid.get(f.get("compare_to")) or last_of_kind.get(f["kind"])
+        last_of_kind[f["kind"]] = f
+        if not f.get("arch"):
             continue
         src = RESEARCH / "arch" / f"{f['arch']}.md"
         doc = md(src.read_text()) if src.exists() else "<p>No snapshot written.</p>"
@@ -420,13 +424,12 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
         seeds = ", ".join(f"s{r['seed']}: <code>{E(r['dir'])}</code>" for r in f["runs"])
         body = (f"<p><a href='/{out.name}/'>← LR-GoWU research</a></p><h1>{E(f['label'])}</h1>"
                 f"<div class=sub>{E(f['date'])} · commit <code>{E(f['commit'])}</code> · <span class=chip>{E(f['id'])}</span></div>"
-                f"<p><b>What changed:</b> {E(f['change'])}<br><b>Verdict:</b> {E(f.get('verdict', ''))}</p>"
+                f"<p><b>What changed:</b> {E(f.get('change') or f.get('about', ''))}<br><b>Verdict:</b> {E(f.get('verdict', ''))}</p>"
                 f"<p class=muted>Runs: {seeds}</p>"
                 f"<div class='card doc'>{doc}</div>{diff}"
                 f"<h2>Exact run config</h2><details><summary>config.json (seed {f['runs'][0]['seed'] if f['runs'] else '?'})</summary>"
                 f"<pre>{E(json.dumps(cfg, indent=1))}</pre></details>")
         (out / "arch" / f"{f['id']}.html").write_text(shell(f"{f['label']} architecture", body))
-        prev = f
     return out
 
 
