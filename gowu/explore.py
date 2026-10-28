@@ -19,6 +19,7 @@ import os
 import pickle
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -62,6 +63,16 @@ class GowuConfig:
     exploit_mode: str = "middle_room"
     exploit_max_repeats: int = 3
     exploit_rules: list = field(default_factory=list)
+    # Confinement trap (NOT in the paper; docs/GOWU_REPRO.md "Room-8 trap"). If the global winner keeps the
+    # same R and (level, room) for trap_window iterations, the population is stuck in a region with no exit
+    # (e.g. MR's room-8 rope post) that never registers as death. The cells (trap_cell px) that particles
+    # occupied there at that R become dead states, like the exploit guard's flagged states, and every
+    # particle in them goes back to its nearest ancestor outside. 0 = off (paper behaviour).
+    trap_window: int = 0
+    trap_cell: int = 8
+    # start the whole population from node `start_node` of a saved demo instead of reset (escape tests)
+    start_demo: str | None = None
+    start_node: int = -1
     # infra
     n_workers: int = 14
     device: str = "auto"
@@ -131,8 +142,15 @@ class GoWU:
         self.pool.reset(range(self.P))
         ck = self.pool.checkpoint([0])[0]
         ram = self.pool.ram([0])[0]
+        R0 = 0.0
+        if cfg.start_demo:
+            with gzip.open(cfg.start_demo, "rb") as f:
+                demo = pickle.load(f)
+            ck, ram, R0 = demo["ckpts"][cfg.start_node], tuple(demo["ram"][cfg.start_node]), demo["R_cum"][cfg.start_node]
+            self.pool.restore([(p, ck) for p in range(self.P)])
         self.tree = LineageTree()
         root = self.tree.make_root(ck, ram, self.pool.obs[0, 3].copy())
+        root.R = R0
         self.nodes: list[Node] = [self.tree.acquire(root) for _ in range(self.P)]
         self.dirty = np.ones(self.P, bool)  # env state != node state -> restore before next rollout
         self.global_winner = self.tree.acquire(root)
@@ -144,7 +162,11 @@ class GoWU:
         self.iteration = 0
         self.t0 = time.time()
         self.rooms_seen: set = {(ram[0], ram[1])}
-        self.stats = dict(rollbacks=0, deaths=0, rollouts=0, exploits=0, rnd_loss=0.0, rnd_n=0, rnd_updates_total=0)
+        self.stats = dict(rollbacks=0, deaths=0, rollouts=0, exploits=0, rnd_loss=0.0, rnd_n=0, rnd_updates_total=0,
+                          trapped=0, traps=0)
+        self._trap_hist: deque = deque(maxlen=max(cfg.trap_window, 1))
+        self._trap_cells: set = set()     # cells seen at the global winner's (level, room, R) during the window
+        self.tabu: set = set()            # (level, room, R, cx, cy) dead-state cells
         self._upd_carry = {"rnd": 0.0, "ens": 0.0}
         self._log = open(os.path.join(cfg.out_dir, "log.jsonl"), "a")
         self._events = open(os.path.join(cfg.out_dir, "reward_events.jsonl"), "a")
@@ -393,6 +415,9 @@ class GoWU:
                 if exploit:
                     dead = True
                     self.stats["exploits"] += 1
+            if not dead and self.tabu and self._trap_key(res.ram, parent.R + res.reward) in self.tabu:
+                dead = True
+                self.stats["trapped"] += 1
             if dead:
                 self.stats["deaths"] += 1
                 self.dirty[p] = True
@@ -402,6 +427,8 @@ class GoWU:
                                         self.pool.obs[p, 3].copy())
             self._set(p, child, dirty=False)
             alive_new[p] = child
+            if cfg.trap_window and self._trap_hist and self._trap_key(child.ram, child.R)[:3] == self._trap_hist[-1]:
+                self._trap_cells.add(self._trap_key(child.ram, child.R))
             self.rooms_seen.add((res.ram[0], res.ram[1]))
             if child.R > self.best_node.R:
                 self.tree.acquire(child)
@@ -498,6 +525,51 @@ class GoWU:
             self.tree.release(gw)
             self.global_winner = new_gw
         self.iteration += 1
+        if cfg.trap_window:
+            self._check_trap()
+
+    # ------------------------------------------------------- confinement trap
+    def _trap_key(self, ram, R):
+        c = self.cfg.trap_cell
+        return (int(ram[0]), int(ram[1]), float(R), int(ram[2]) // c, int(ram[3]) // c)
+
+    def _check_trap(self):
+        gw = self.global_winner
+        key = self._trap_key(gw.ram, gw.R)
+        if self._trap_hist and self._trap_hist[-1] != key[:3]:
+            self._trap_hist.clear()
+            self._trap_cells = set()
+        self._trap_hist.append(key[:3])
+        self._trap_cells.add(key)
+        if len(self._trap_hist) < self.cfg.trap_window:
+            return
+        cells = self._trap_cells | {self._trap_key(n.ram, n.R) for n in self.nodes}
+        cells = {c for c in cells if c[:3] == key[:3]}
+        self.tabu |= cells
+        self.stats["traps"] += 1
+        # every particle (and the global winner) in a dead cell goes back to its nearest ancestor outside
+        moved = 0
+        for p in range(self.P):
+            n = self._escape(self.nodes[p])
+            if n is not self.nodes[p]:
+                self._set(p, n)
+                moved += 1
+        new_gw = self._escape(gw)
+        if new_gw is not gw:
+            self.tree.acquire(new_gw)
+            self.tree.release(gw)
+            self.global_winner = new_gw
+        with open(os.path.join(self.cfg.out_dir, "traps.jsonl"), "a") as f:
+            f.write(json.dumps(dict(iter=self.iteration, frames=self.frames, level=key[0], room=key[1], R=key[2],
+                                    n_cells=len(cells), moved=moved, gw_after=list(self.global_winner.ram),
+                                    gw_R_after=self.global_winner.R)) + "\n")
+        self._trap_hist.clear()
+        self._trap_cells = set()
+
+    def _escape(self, n: Node) -> Node:
+        while n.parent is not None and self._trap_key(n.ram, n.R) in self.tabu:
+            n = n.parent
+        return n
 
     # ------------------------------------------------------------ run / io
     @property
@@ -521,7 +593,7 @@ class GoWU:
             rnd_updates_total=s["rnd_updates_total"], ens_updates_total=self.ens_updates_total,
             global_U=float(self.score([self.global_winner])[0]),
             global_winner_in_population=any(n is self.global_winner for n in self.nodes),
-            gw_ram=self.global_winner.ram)
+            gw_ram=self.global_winner.ram, traps=s["traps"], trapped=s["trapped"], tabu_cells=len(self.tabu))
         self._log.write(json.dumps(rec) + "\n")
         self._log.flush()
         self._events.flush()
