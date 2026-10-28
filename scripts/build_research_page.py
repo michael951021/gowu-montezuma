@@ -325,7 +325,7 @@ def build(out: Path):
         best = max((x["best_R"] or 0) for x in fin) if fin else None
         rooms = max((x["rooms"] or 0) for x in fin) if fin else None
         frames = max((x["frames"] or 0) for x in fin) if fin else None
-        arch = (f"<a href='arch/{E(f['id'])}.html'>architecture →</a>" if f.get("arch") else
+        arch = (f"<a href='/{out.name}/arch/{E(f['id'])}.html'>architecture →</a>" if f.get("arch") else
                 "<span class=muted><code>docs/GOWU_REPRO.md</code></span>")
         rows.append(f"<tr><td><span class=sw style='background:var({f['color']})'></span><b>{E(f['label'])}</b>"
                     f"<div class=muted>{E(f['date'])} · <code>{E(f['commit'])}</code> · {len(f['runs'])} seed(s)</div></td>"
@@ -342,7 +342,7 @@ def build(out: Path):
         bR = [stepAt(r["rows"], latest_frames := max(x["frames"] for x in fin)) for r in base["runs"]]
         bR = [v for v in bR if v is not None]
         tiles = "".join(f"<div class='card tile'><div class=k>{k}</div><div class=v>{v}</div><div class=muted>{s}</div></div>" for k, v, s in [
-            ("Latest iteration", E(latest["label"]), f"<code>{E(latest['commit'])}</code> · <a href='arch/{E(latest['id'])}.html'>architecture</a>"),
+            ("Latest iteration", E(latest["label"]), f"<code>{E(latest['commit'])}</code> · <a href='/{out.name}/arch/{E(latest['id'])}.html'>architecture</a>"),
             ("Deployable score (eval mean)", " / ".join(fmt(e["mean"]) for e in evs) or "–", "π_R from reset, sticky actions, per seed"),
             ("Best reward in training", fmt(max(x["best_R"] for x in fin)), f"{max(x['rooms'] for x in fin)} rooms · {fmt(latest_frames / 1e6)}M frames"),
             ("GoWU Phase I at same frames", (f"{fmt(min(bR))}–{fmt(max(bR))}" if bR else "–"), f"best trajectory, restores states, {len(bR)} seeds"),
@@ -418,7 +418,7 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
                     f"<h3>Code (<code>git diff --stat {E(prev['commit'])}..{E(f['commit'])}</code>)</h3>" +
                     (f"<pre>{E(stat)}</pre>" if stat else "<p class=muted>Same commit.</p>"))
         seeds = ", ".join(f"s{r['seed']}: <code>{E(r['dir'])}</code>" for r in f["runs"])
-        body = (f"<p><a href='../index.html'>← LR-GoWU research</a></p><h1>{E(f['label'])}</h1>"
+        body = (f"<p><a href='/{out.name}/'>← LR-GoWU research</a></p><h1>{E(f['label'])}</h1>"
                 f"<div class=sub>{E(f['date'])} · commit <code>{E(f['commit'])}</code> · <span class=chip>{E(f['id'])}</span></div>"
                 f"<p><b>What changed:</b> {E(f['change'])}<br><b>Verdict:</b> {E(f.get('verdict', ''))}</p>"
                 f"<p class=muted>Runs: {seeds}</p>"
