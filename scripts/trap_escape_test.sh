@@ -12,10 +12,10 @@ FIX=(
   "l1v1 runs/phase1_validation/seed1/demo_best.pkl.gz 6030"
 )
 mkdir -p "$OUT"
-run() {  # name demo node window gpu
-  local d="$OUT/$1-w$4"
+run() {  # name demo node window gpu [tag extra-sets...]
+  local d="$OUT/$1-w$4${6:-}"
   CUDA_VISIBLE_DEVICES=$5 $PY scripts/run_gowu.py --config configs/gowu_mr.yaml --set seed=0 n_workers=$WORKERS \
-    total_frames=$FRAMES out_dir="$d" start_demo="$2" start_node=$3 trap_window=$4 track_room_landmarks=false \
+    total_frames=$FRAMES out_dir="$d" start_demo="$2" start_node=$3 trap_window=$4 track_room_landmarks=false ${@:7} \
     > "$d.out" 2>&1 || echo "FAILED $d" >> "$OUT/failures"
 }
 for f in "${FIX[@]}"; do
@@ -24,6 +24,10 @@ for f in "${FIX[@]}"; do
   run $1 $2 $3 $WIN 1 &
   wait
 done
+# Does a longer rollout range (paper: T between 3 and 20 across games; MR uses [5, 15]) get out without the fix?
+set -- ${FIX[0]}; run $1 $2 $3 0 0 -T3-20 "inner_steps=[3,20]" &
+set -- ${FIX[2]}; run $1 $2 $3 0 1 -T3-20 "inner_steps=[3,20]" &
+wait
 $PY - "$OUT" <<'EOF'
 import json, sys, glob, os
 rows = []
