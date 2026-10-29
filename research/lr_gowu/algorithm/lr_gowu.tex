@@ -7,7 +7,7 @@
 \usepackage{float}
 \usepackage{algorithm}
 \usepackage[noend]{algpseudocode}
-\usepackage{booktabs,tabularx}
+\usepackage{booktabs,tabularx,array}
 \usepackage{xcolor}
 \usepackage{hyperref}
 \hypersetup{colorlinks,linkcolor=blue!60!black,urlcolor=blue!60!black}
@@ -53,75 +53,95 @@ hindsight demonstrations that $\pi_R$ imitates. The output is a deployable polic
 not only a trajectory. The primed numbers mark the counterpart of the paper's algorithm.
 
 \begin{center}\small
-\begin{tabular}{@{}ll@{}}\toprule
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{6.2cm}X@{}}\toprule
 \textbf{GoWU (paper)} & \textbf{LR-GoWU (here)}\\\midrule
-particle $p_i$ on a simulator checkpoint & episode slot $i$, always started from $s_0$\\
-$\proc{Reset}(p_i, v)$ & return phase: $\pi_R$ walks to landmark $g$ (Alg.~\ref{alg:episode}, l.~\ref{ln:ret}--\ref{ln:explore})\\
-lineage tree $\mathcal{T}$, node $v=(s_v, R_v, u_v)$ & landmark archive $\cA$, one landmark per cell (Alg.~\ref{alg:archive})\\
-outer step of $T_i$ inner steps & explore phase after handoff (Alg.~\ref{alg:episode}, l.~\ref{ln:explore}--\ref{ln:end})\\
-$\mathcal{T}.\proc{AddChild}(p_i)$ & $\proc{UpdateArchive}$ on every alive step\\
-winner reset of \Dead\ particles & next goal of a dead slot $\leftarrow$ group winner (Alg.~\ref{alg:main}, l.~\ref{ln:winner})\\
-rollback when \emph{all} particles die & rollback when returns to a landmark keep failing (Alg.~\ref{alg:return})\\
-\bottomrule\end{tabular}
+particle $p_i$ on a simulator checkpoint & episode slot $i$, always started from $s_0$\\\addlinespace[3pt]
+$\proc{Reset}(p_i, v)$: copy a checkpoint into $p_i$ & return phase: $\pi_R$ walks from $s_0$ to landmark $g$ (Alg.~\ref{alg:episode}, l.~\ref{ln:ret}--\ref{ln:retend})\\\addlinespace[3pt]
+one particle's life from one reset to its next (several outer steps) & one $\proc{RunEpisode}$ (Alg.~\ref{alg:episode})\\\addlinespace[3pt]
+one outer step: one held random action for $T_i \sim \Unif(T_{\min}, T_{\max})$ inner steps & one hold segment of the explore phase, $h \sim \Unif\{5..15\}$ steps (Alg.~\ref{alg:episode}, l.~\ref{ln:hold})\\\addlinespace[3pt]
+stop the rollout as soon as $R$ increases (Alg.~1, l.~8) & \emph{not used}: exploration continues after a reward\\\addlinespace[3pt]
+$\mathcal{T}.\proc{AddChild}(p_i)$ at the end of each outer step & $\proc{UpdateArchive}$ after every \Alive\ step (Alg.~\ref{alg:archive})\\\addlinespace[3pt]
+reset \Dead\ particles to the winner & a dead slot's next goal is the group winner (Alg.~\ref{alg:main}, l.~\ref{ln:winner})\\\addlinespace[3pt]
+rollback when \emph{all} particles of a group die & rollback when returns to one landmark keep failing (Alg.~\ref{alg:return})\\\addlinespace[3pt]
+$U \gets p_i.\proc{Step}(1, U)$: $U$ is read and trained during rollouts & $U$ is read inside $\proc{UpdateArchive}$ and $\proc{Winner}$; every frame goes into the RND replay in $\proc{Step}$; the RND predictor is trained once per unroll (Alg.~\ref{alg:main}, l.~\ref{ln:rnd})\\
+\bottomrule\end{tabularx}
 \end{center}
 
+\clearpage
 \section*{Terms and definitions}
 \small
-\begin{tabularx}{\linewidth}{@{}p{3.1cm}X@{}}\toprule
-$\cell(s)$ & Discretization of a state, read from RAM: $(\text{level}, \text{room}, \#\text{keys held}, \lfloor x/16\rfloor, \lfloor y/16\rfloor)$.\\
-Landmark $c$ & The best state seen so far in one cell. It stores the frame $f_c$ ($84{\times}84$ grey), the cumulative extrinsic reward $R_c$ of the episode when it was stored, the uncertainty $U_c$, the parent landmark $u_c$, the depth $d_c$ and the return statistics below. Landmarks are replaced, never removed.\\
-Archive $\cA$ & The set of landmarks. Its root $c_0 = \cell(s_0)$ has $R_{c_0} = 0$.\\
-$U(f)$ & Epistemic uncertainty: RND prediction error on one frame, shared by all slots. Stored values $U_c$ are \emph{re-scored} with the current RND whenever they enter a comparison.\\
-$\succ^{\text{lex}}$, $\lexargmax$ & As in the paper: $(b,c) \succ^{\text{lex}} (b',c')$ iff $b > b'$ or ($b = b'$ and $c > c'$). $\lexargmax_{c \in S}(R_c, U_c)$ is the landmark with the highest $R$, and among those the highest re-scored $U$.\\
-$\Dead$ & A step is $\Dead$ if a life is lost, the game is over, or the exploit guard fires (the middle-room key bug; its reward is zeroed). A $\Dead$ step ends the episode. All other steps are $\Alive$.\\
-$\Reach(s, R, g)$ & $\cell(s) = g$ and $R \ge R_g$: the agent stands in $g$'s cell with at least $g$'s reward.\\
-$\Anc_k(g)$ & The $k$-th ancestor of $g$ via parent pointers ($\Anc_1(g) = u_g$), clamped to the farthest existing ancestor. $\Anc_{\le D}(g)$ is the list of the $D = 32$ nearest ancestors.\\
-Demo of $c$ & An episode prefix $\tau[0{:}t]$ from $s_0$ to the episode's first step in $c$ with $R \ge R_c$. Each landmark keeps its top 4 demos ranked by ($R$ desc., length asc.).\\
-Return statistics of $g$ & $W_g$: the last ${\le}64$ return outcomes ($1$ = reached, $0$ = failed or died), with $\succr(g) = \text{mean}(W_g)$. Also: $\ell_g$, the EMA of successful return lengths; the counters $n^{\text{tgt}}_g$ (episodes that targeted $g$), $n^{\text{reach}}_g$, $n^{\text{hand}}_g$ (handoffs at $g$) and $n^{\text{qd}}_g$ (handoffs followed by death within 8 steps).\\
-$\Elig(g)$ & The root is always eligible. Any other $g$ is \emph{ineligible} if ($n^{\text{tgt}}_g \ge 32$, $n^{\text{reach}}_g = 0$ and $g$ has no demo), or if ($n^{\text{hand}}_g \ge 16$ and $n^{\text{qd}}_g > 0.9\, n^{\text{hand}}_g$). $\proc{Fallback}(g)$ returns the first eligible landmark in $(g, \Anc_1(g), \Anc_2(g), \ldots)$, else $c_0$.\\
-Slots, groups & $E = 128$ episode slots run in lockstep, in $M = 4$ groups $G_1..G_M$ of $N = 32$ slots. Group $m$ has a goal $g_m$, the set $I_m$ of landmarks its slots improved since its last consolidation, an episode counter $n_m$ and a target $K_m$. Slot $i$ has a next goal $\nu_i$.\\
-$I$ & The landmarks improved (created or replaced) by the current episode.\\
-$\pi_R$, $V_R$ & Goal-conditioned actor-critic. Input: image $x_t$ (4-frame stack, frame at the last reward, goal frame $f_g$; 6 channels) and context $\kappa_t = (\mathbf{1}[\Anc_{\le 32}(g) \text{ visited this episode}],\ \mathrm{clip}((R_g - R_t)/1000, 0, 5),\ t/5000)$. Separate IMPALA encoders for $\pi_R$ and $V_R$.\\
-$\beta_t$ & Logit temperature (entropy boost): $\beta_t = 1 + (0.01 \max(0,\, t - t_{\text{prog}} - 100))^2$, where $t_{\text{prog}}$ is the last step at which the episode entered a cell for the first time.\\
+\newcommand{\gap}{\\\addlinespace[5pt]}
+\textbf{Objects.}\par\smallskip
+\noindent\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{3.0cm}X@{}}\toprule
+$\cell(s)$ & A function from a state to a discrete key, read from the emulator RAM: $\cell(s) = (\text{level}, \text{room}, \#\text{keys held}, \lfloor x/16\rfloor, \lfloor y/16\rfloor)$, where $(x, y)$ is the player's pixel position. States with the same key are treated as the same place.\gap
+Landmark $c$ & The record kept for one cell (we name the landmark by its cell key, so ``$\cell(s) = c$'' means $s$ is in landmark $c$'s cell). It stores: $f_c$, an $84{\times}84$ grey frame of the stored state; $R_c$, the episode's cumulative reward at the moment that state was seen; $U_c$, the uncertainty of $f_c$; $u_c$, the parent landmark; $d_c$, the depth ($d_{u_c} + 1$); its demos; and its return statistics. A cell's landmark can be overwritten by a better state but is never deleted.\gap
+Archive $\cA$ & The set of all landmarks. The root $c_0 = \cell(s_0)$ is the start cell with $R_{c_0} = 0$. Parent pointers make $\cA$ a tree.\gap
+$U(f)$ & A number: the uncertainty of frame $f$, measured as the RND prediction error (squared error between a trained predictor network and a fixed random target network). Frames seen often have low error. One RND is shared by all slots and is trained throughout the run, so a stored $U_c$ goes stale; it is recomputed (``re-scored'') as $U(f_c)$ whenever it is compared.\gap
+$\succ^{\text{lex}}$, $\lexargmax$ & As in the paper. $(b,c) \succ^{\text{lex}} (b',c')$ iff $b > b'$, or $b = b'$ and $c > c'$. $\lexargmax_{c \in S}(R_c, U_c)$ returns the landmark in the set $S$ with the highest $R_c$, breaking ties by the highest re-scored $U_c$.\gap
+$\Dead$ / $\Alive$ & A step is $\Dead$ if a life is lost, the game is over, or the exploit guard fires (a RAM check for the middle-room key bug; the bug's reward is set to 0). A $\Dead$ step ends the episode. Every other step is $\Alive$.\gap
+$\Reach(s, R, g)$ & Returns true or false. $s$ is the current state, $R$ the episode's cumulative reward so far (the sum of rewards since reset, not the one-step reward $r$), and $g$ a landmark. It is true iff $\cell(s) = g$ \emph{and} $R \ge R_g$: the agent stands in $g$'s cell having collected at least the reward that $g$ was recorded with. Being in the right cell with less reward (for example, having skipped a jewel that $g$'s route collected) does not count.\gap
+$\Anc_k(g)$ & The landmark reached by following parent pointers $k$ times from $g$ ($\Anc_1(g) = u_g$). If the tree above $g$ has fewer than $k$ levels it returns the root. $\Anc_{\le 32}(g)$ is the list of $g$'s 32 nearest ancestors.\gap
+Demo of $c$ & A recorded action sequence that is known to reach $c$ from reset: the prefix $\tau[0{:}t]$ of some episode, cut at the first step $t$ where that episode was in $c$'s cell with $R \ge R_c$. Each landmark keeps its best 4 demos ranked by $R$ (higher first), then length (shorter first). $\pi_R$ imitates them.\gap
+Return statistics of $g$ & $W_g$: list of the last ${\le}64$ return attempts to $g$, each $1$ (reached) or $0$ (timed out, stalled or died). $\succr(g)$: mean of $W_g$ (0 if empty). $\ell_g$: running average (EMA, weight $0.1$) of how many steps successful returns took. Counters: $n^{\text{tgt}}_g$, episodes that chose $g$ as goal; $n^{\text{reach}}_g$, returns that reached $g$; $n^{\text{hand}}_g$, handoffs at $g$; $n^{\text{qd}}_g$, handoffs followed by death within 8 steps (``quick death'').\gap
+$\Elig(g)$ & Returns true or false: may $g$ be used as a goal? The root always may. Another $g$ is \emph{ineligible} if it looks unreachable ($n^{\text{tgt}}_g \ge 32$, $n^{\text{reach}}_g = 0$ and no demo to learn from), or doomed (at least 16 handoffs and more than 90\% of them died within 8 steps). We also write $\Elig$ for the set of eligible landmarks.\gap
+$\proc{Fallback}(g)$ & The first eligible landmark in the list $g, \Anc_1(g), \Anc_2(g), \ldots$; the root if none is.\gap
+$\proc{Winner}(m)$ & Group $m$'s current winner: $\lexargmax_{c \in \{g_m\} \cup (I_m \cap \Elig)}(R_c, U_c)$.\gap
+Slots and groups & $E = 128$ slots, each running one episode at a time, all stepped in lockstep. They form $M = 4$ groups $G_1, \ldots, G_M$ of $N = 32$ slots ($m(i)$ is slot $i$'s group). Group $m$ keeps a goal $g_m$, the set $I_m$ of landmarks its slots improved since its last consolidation, an episode counter $n_m$ and a consolidation target $K_m$. Slot $i$ keeps $\nu_i$, the goal of its next episode.\gap
+$\pi_R$, $V_R$ & The return policy and its value function: one goal-conditioned actor-critic (separate IMPALA encoders). Its input at step $t$ is an image $x_t$ (the last 4 frames, the frame at the last reward, and the goal's frame $f_g$: 6 channels) and a context vector $\kappa_t$ = (32 bits: which of $\Anc_{\le 32}(g)$ this episode has visited; $\mathrm{clip}((R_g - R)/1000, 0, 5)$, the reward still missing; $t/5000$, the time used).\\
+\bottomrule
+\end{tabularx}
+
+\clearpage\noindent\textbf{Symbols inside the algorithms.}\par\smallskip
+\noindent\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{3.0cm}X@{}}\toprule
+$s, f, r, R, t, \tau$ & Current state, its frame, last one-step reward, cumulative reward since reset, steps since reset, and the episode's trajectory $(s_0, a_1, s_1, \ldots)$.\gap
+$\proc{Step}(a)$ & One environment step with all its bookkeeping: $s, r, \textit{dead} \gets \cE.\textsc{step}(a)$; $R \gets R + r$; $t \gets t + 1$; append $(a, s)$ to $\tau$; add $f$ to the RND replay (the frames $U$ is trained on).\gap
+$I$, $J$ & $I$: landmarks this episode created or replaced so far. $J$: those created or replaced by the current step (empty or one landmark).\gap
+$t_{\text{prog}}$ & Last step at which the episode entered a cell it had not visited before (``progress''). Drives the return stall test and $\beta_t$.\gap
+$\beta_t$ & Temperature on $\pi_R$'s logits (an entropy boost when stuck): $\beta_t = 1 + (0.01 \max(0,\, t - t_{\text{prog}} - 100))^2$. It is 1 until 100 steps pass without progress, then grows, flattening the action distribution.\gap
+$L$, $\mu L + b$ & Expected return length for $g$ and the return time limit derived from it.\gap
+\textit{handed}, $t_h$ & \textit{handed} is true if this episode reached $g$ (or started in it); $t_h$ is the step at which that happened.\gap
+$t_0$, $t_{\text{imp}}$ & Step at which the explore phase began; last step at which this episode improved a landmark.\gap
+$a_{\text{hold}}$, $h$ & The held random action and the number of steps it is still held. $\cA_{\text{act}}$ is the set of 18 Atari actions.\gap
+$r^R_t$ & Reward used to train $\pi_R$ with PPO (return phase only); the game reward $r$ enters it only through $0.1\,\mathrm{sign}(r)$.\\
 \bottomrule
 \end{tabularx}
 \normalsize
 
 \begin{algorithm}[H]
-\caption{\proc{RunEpisode} (one episode of slot $i$; replaces one particle's outer step)}\label{alg:episode}
+\caption{\proc{RunEpisode} (one episode of slot $i$: return to $g$, then explore)}\label{alg:episode}
 \begin{algorithmic}[1]
 \Input goal landmark $g \in \cA$, return policy $\pi_R$, uncertainty $U$
-\Params return timeout $(\mu, b) = (2, 200)$, return stall $500$, explore budget $1000$, explore stall $300$,\\
-\hspace*{3.2em}episode cap $T_{\max} = 5000$, hold length $[h_{\min}, h_{\max}] = [5, 15]$, $\epsilon = 0.2$, quick death $8$
-\State $s \gets \cE.\textsc{reset}()$;\ $R \gets 0$;\ $\tau \gets (s)$;\ $I \gets \emptyset$;\ $t \gets 0$;\ $n^{\text{tgt}}_g \gets n^{\text{tgt}}_g + 1$ \Comment{no restore: always from $s_0$}
+\Params return time limit $(\mu, b) = (2, 200)$, return stall $500$, explore budget $1000$, explore stall $300$,
+\item[] \hspace*{3.6em}episode cap $T_{\max} = 5000$, hold length $[h_{\min}, h_{\max}] = [5, 15]$, $\epsilon = 0.2$, quick death $8$
+\State $s \gets \cE.\textsc{reset}()$;\ $R \gets 0$;\ $t \gets 0$;\ $\tau \gets (s)$;\ $I \gets \emptyset$;\ $\textit{handed} \gets \text{false}$;\ $n^{\text{tgt}}_g \gets n^{\text{tgt}}_g + 1$ \Comment{no restore}
 \If{$\cell(s) = g$ and $R_g \le 0$}\label{ln:triv} \Comment{goal is the start cell (e.g. root)}
-  \State $n^{\text{reach}}_g, n^{\text{hand}}_g \gets n^{\text{reach}}_g{+}1, n^{\text{hand}}_g{+}1$;\ $t_h \gets 0$;\ \textbf{goto} line~\ref{ln:explore} \Comment{no return attempt is recorded}
+  \State $n^{\text{reach}}_g \gets n^{\text{reach}}_g + 1$;\ $n^{\text{hand}}_g \gets n^{\text{hand}}_g + 1$;\ $\textit{handed} \gets \text{true}$;\ $t_h \gets 0$;\ \textbf{goto} line~\ref{ln:explore}
 \EndIf
 \LComment{Return phase: replaces Reset$(p_i, v)$ by walking to $g$}
-\State $L \gets \ell_g$ if defined\label{ln:ret}, else length of $g$'s best demo, else $1000$
-\For{$t = 1, 2, \ldots$}
+\State $L \gets \ell_g$ if defined, else the length of $g$'s best demo, else $1000$\label{ln:ret}
+\Loop \Comment{each pass is one step; $\proc{Step}$ advances $t$}
   \State $a_t \sim \pi_R(\cdot \mid x_t, \kappa_t)$ at temperature $\beta_t$
-  \State $s, r, \textit{dead} \gets \cE.\textsc{step}(a_t)$;\ $R \gets R + r$;\ append $(a_t, s)$ to $\tau$
+  \State $\textit{dead} \gets \proc{Step}(a_t)$
   \IfThen{\textbf{not} \textit{dead}}{$I \gets I \cup \proc{UpdateArchive}(s, R, \tau, i)$} \Comment{Algorithm \ref{alg:archive}}
   \State $r^R_t \gets \mathbf{1}[\Reach(s,R,g) \wedge \neg\textit{dead}] + 0.1\cdot\#\{\text{ancestors in } \Anc_{\le 32}(g) \text{ first visited at } t\} + 0.1\,\mathrm{sign}(r)$
   \If{\textit{dead}}
     \State $\proc{RecordReturn}(g, 0)$;\ \Return $(\tau, I, \Dead)$ \Comment{Algorithm \ref{alg:return}}
-  \ElsIf{$\Reach(s, R, g)$}
-    \State $\proc{RecordReturn}(g, 1)$;\ $\ell_g \gets 0.9\,\ell_g + 0.1\,t$;\ $n^{\text{hand}}_g \gets n^{\text{hand}}_g + 1$;\ $t_h \gets t$;\ \textbf{break} \Comment{handoff}
+  \ElsIf{$\Reach(s, R, g)$} \Comment{handoff: reached $g$}
+    \State $\proc{RecordReturn}(g, 1)$;\ $\ell_g \gets 0.9\,\ell_g + 0.1\,t$;\ $n^{\text{hand}}_g \gets n^{\text{hand}}_g + 1$;\ $\textit{handed} \gets \text{true}$;\ $t_h \gets t$;\ \textbf{break}
   \ElsIf{$t \ge \mu L + b$ \textbf{or} $t - t_{\text{prog}} \ge 500$ \textbf{or} $t \ge T_{\max}$}
-    \State $\proc{RecordReturn}(g, 0)$;\ $t_h \gets \bot$ \Comment{failed: explore from here anyway}
+    \State $\proc{RecordReturn}(g, 0)$ \Comment{failed: explore from here anyway}
     \IfThen{$t \ge T_{\max}$}{\Return $(\tau, I, \Alive)$}
     \State \textbf{break}
   \EndIf
-\EndFor
+\EndLoop\label{ln:retend}
 \LComment{Explore phase: GoWU's particle policy (held random action)}
-\State $t_0 \gets t$;\ $t_{\text{imp}} \gets t$;\ $h \gets 0$\label{ln:explore} \Comment{$\approx$ Alg.~1, l.~4--12}
+\State $t_0 \gets t$;\ $t_{\text{imp}} \gets t$;\ $h \gets 0$\label{ln:explore} \Comment{$\approx$ a run of Alg.~1 outer steps, l.~4--12}
 \Repeat
-  \IfThen{$h = 0$}{$a_{\text{hold}} \sim \Unif(\cA_{\text{act}})$;\ $h \sim \Unif\{h_{\min}, \ldots, h_{\max}\}$}
+  \IfThen{$h = 0$}{\label{ln:hold}$a_{\text{hold}} \sim \Unif(\cA_{\text{act}})$;\ $h \sim \Unif\{h_{\min}, \ldots, h_{\max}\}$}
   \State $a_t \gets a_{\text{hold}}$;\ $h \gets h - 1$;\ with probability $\epsilon$: $a_t \sim \Unif(\cA_{\text{act}})$
-  \State $t \gets t + 1$;\ $s, r, \textit{dead} \gets \cE.\textsc{step}(a_t)$;\ $R \gets R + r$;\ append $(a_t, s)$ to $\tau$
+  \State $\textit{dead} \gets \proc{Step}(a_t)$
   \If{\textit{dead}}
-    \IfThen{$t_h \ne \bot$ \textbf{and} $t - t_h \le 8$}{$n^{\text{qd}}_g \gets n^{\text{qd}}_g + 1$} \Comment{feeds the doomed-landmark gate}
+    \IfThen{\textit{handed} \textbf{and} $t - t_h \le 8$}{$n^{\text{qd}}_g \gets n^{\text{qd}}_g + 1$} \Comment{feeds the doomed-landmark gate}
     \State \Return $(\tau, I, \Dead)$
   \EndIf
   \State $J \gets \proc{UpdateArchive}(s, R, \tau, i)$;\ $I \gets I \cup J$;\ \textbf{if} $J \ne \emptyset$ \textbf{then} $t_{\text{imp}} \gets t$
@@ -192,7 +212,7 @@ $\beta_t$ & Logit temperature (entropy boost): $\beta_t = 1 + (0.01 \max(0,\, t 
       \ElsIf{status $= \Alive$ \textbf{and} $I \cap \Elig \ne \emptyset$}
         \State $\nu_i \gets \lexargmax_{c \in I \cap \Elig}(R_c, U_c)$ \Comment{survivor continues; $\approx$ Alg.~1, l.~10--11}
       \Else
-        \State\label{ln:winner} $\nu_i \gets \proc{Winner}(m) := \lexargmax_{c \in \{g_m\} \cup (I_m \cap \Elig)}(R_c, U_c)$ \Comment{$\approx$ Alg.~1, l.~23}
+        \State $\nu_i \gets \proc{Winner}(m)$\label{ln:winner} \Comment{$\approx$ Alg.~1, l.~23}
       \EndIf
       \State $n_m \gets n_m + 1$\label{ln:choose-end}
       \If{$n_m \ge K_m$} \Comment{group consolidation; $\approx$ Alg.~1, l.~29--30}
@@ -210,7 +230,7 @@ $\beta_t$ & Logit temperature (entropy boost): $\beta_t = 1 + (0.01 \max(0,\, t 
   \State \hspace{1em} terminal at $\Reach$ or \Dead;\ return timeout/stall bootstraps from $\gamma V_R(s_{t+1})$
   \State \textbf{BC}: 8 minibatches of 512 $(x_j, \kappa_j) \to a_j$ from demos: landmark $c \propto 1 - \succr(c)$,
   \State \hspace{1em} skipping $c$ with $|W_c| \ge 8$ and $\succr(c) \ge 0.8$;\ demo uniform among $c$'s;\ $j \sim \Unif\{0..t_{\text{arr}}{-}1\}$
-  \State \textbf{RND}: $31$ updates per $1000$ agent steps on batches of $128$ frames from the $512$k replay
+  \State \textbf{Train $U$} (RND predictor): $31$ updates per $1000$ agent steps, batches of $128$ frames from the replay\label{ln:rnd}
 \EndLoop
 \end{algorithmic}
 \end{algorithm}

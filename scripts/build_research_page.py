@@ -440,7 +440,7 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
 
 def build_algorithm(out: Path):
     """algorithm/: the LaTeX pseudo-algorithms, the compiled PDF (rebuilt with tectonic when the .tex is newer)."""
-    tex, pdf = ALGO / "lr_gowu.tex", ALGO / "lr_gowu.pdf"
+    tex, pdf, walk = ALGO / "lr_gowu.tex", ALGO / "lr_gowu.pdf", ALGO / "walkthrough.md"
     if shutil.which("tectonic") and (not pdf.exists() or pdf.stat().st_mtime < tex.stat().st_mtime):
         subprocess.run(["tectonic", "-r", "2", tex.name], cwd=ALGO, check=True, capture_output=True)
     d = out / "algorithm"
@@ -452,7 +452,7 @@ def build_algorithm(out: Path):
     m = re.search(r"commit \\texttt\{(\w+)\}", src)
     body = (f"<p><a href='/{out.name}/'>← LR-GoWU research</a></p><h1>LR-GoWU algorithm</h1>"
             f"<div class=sub>Pseudo-algorithms in the style of the GoWU paper's Algorithms 1–2, with terms and definitions"
-            f" and hyperparameters. Describes commit <code>{E(m.group(1) if m else '?')}</code>.</div>"
+            f", hyperparameters and a line-by-line walkthrough below the PDF. Describes commit <code>{E(m.group(1) if m else '?')}</code>.</div>"
             f"<div class=ctrl><a href='lr_gowu.pdf' target=_blank><button>Open PDF</button></a>"
             f"<a href='lr_gowu.pdf' download><button>Download PDF</button></a>"
             f"<a href='lr_gowu.tex' download><button>Download .tex</button></a>"
@@ -460,6 +460,7 @@ def build_algorithm(out: Path):
             + (f"<iframe src='lr_gowu.pdf#view=FitH' title='LR-GoWU algorithm PDF' "
                f"style='width:100%;height:88vh;border:1px solid var(--line);border-radius:10px;background:#fff'></iframe>"
                if pdf.exists() else "<p class=muted>PDF not built (tectonic not found).</p>")
+            + (f"<div class='card doc' style='margin-top:24px'>{md(walk.read_text())}</div>" if walk.exists() else "")
             + f"<h2>LaTeX source</h2><pre id=src>{E(src)}</pre>")
     script = ("<script>document.getElementById('copy').onclick=e=>navigator.clipboard.writeText("
               "document.getElementById('src').textContent).then(()=>{e.target.textContent='Copied';"
