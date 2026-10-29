@@ -12,11 +12,13 @@ import argparse
 import html
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 RESEARCH = REPO / "research" / "lr_gowu"
+ALGO = RESEARCH / "algorithm"
 DEFAULT_OUT = Path.home() / "Documents/coders/loop/reports/lr-gowu"
 HUB = ("<script>(s=>{s.src='http://'+location.hostname+':8765/hub.js';document.head.append(s)})"
        "(document.createElement('script'))</script>")
@@ -357,7 +359,8 @@ def build(out: Path):
 <h1>LR-GoWU research</h1>
 <div class=sub>Learned-Return GoWU on Montezuma's Revenge: GoWU's search, but no emulator restores. A goal-conditioned
 policy has to walk back to every landmark, so the result is a deployable policy rather than a lucky trajectory.
-Baseline: our GoWU reproduction (Mhammedi &amp; Cohan 2026). Plan: <code>docs/PLAN_LR_GOWU.md</code>.</div>
+Baseline: our GoWU reproduction (Mhammedi &amp; Cohan 2026). Plan: <code>docs/PLAN_LR_GOWU.md</code>.
+<a href='/{out.name}/algorithm/'>Algorithm (LaTeX / PDF) →</a></div>
 <div class=tiles>{tiles}</div>
 
 <h2>Training curves</h2>
@@ -383,6 +386,7 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
 <h2>Where the data is</h2>
 <div class="card tw"><table><tbody>
 <tr><td>Registry (what this page shows)</td><td><code>{E(str(RESEARCH / 'registry.json'))}</code></td></tr>
+<tr><td>Algorithm (LaTeX)</td><td><code>{E(str(ALGO / 'lr_gowu.tex'))}</code></td></tr>
 <tr><td>Architecture snapshots</td><td><code>{E(str(RESEARCH / 'arch'))}/&lt;id&gt;.md</code></td></tr>
 <tr><td>Rebuild this page</td><td><code>python3 scripts/build_research_page.py</code> (in <code>{E(str(REPO))}</code>)</td></tr>
 {''.join(locs)}
@@ -430,7 +434,37 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
                 f"<h2>Exact run config</h2><details><summary>config.json (seed {f['runs'][0]['seed'] if f['runs'] else '?'})</summary>"
                 f"<pre>{E(json.dumps(cfg, indent=1))}</pre></details>")
         (out / "arch" / f"{f['id']}.html").write_text(shell(f"{f['label']} architecture", body))
+    build_algorithm(out)
     return out
+
+
+def build_algorithm(out: Path):
+    """algorithm/: the LaTeX pseudo-algorithms, the compiled PDF (rebuilt with tectonic when the .tex is newer)."""
+    tex, pdf = ALGO / "lr_gowu.tex", ALGO / "lr_gowu.pdf"
+    if shutil.which("tectonic") and (not pdf.exists() or pdf.stat().st_mtime < tex.stat().st_mtime):
+        subprocess.run(["tectonic", "-r", "2", tex.name], cwd=ALGO, check=True, capture_output=True)
+    d = out / "algorithm"
+    d.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(tex, d / tex.name)
+    if pdf.exists():
+        shutil.copy2(pdf, d / pdf.name)
+    src = tex.read_text()
+    m = re.search(r"commit \\texttt\{(\w+)\}", src)
+    body = (f"<p><a href='/{out.name}/'>← LR-GoWU research</a></p><h1>LR-GoWU algorithm</h1>"
+            f"<div class=sub>Pseudo-algorithms in the style of the GoWU paper's Algorithms 1–2, with terms and definitions"
+            f" and hyperparameters. Describes commit <code>{E(m.group(1) if m else '?')}</code>.</div>"
+            f"<div class=ctrl><a href='lr_gowu.pdf' target=_blank><button>Open PDF</button></a>"
+            f"<a href='lr_gowu.pdf' download><button>Download PDF</button></a>"
+            f"<a href='lr_gowu.tex' download><button>Download .tex</button></a>"
+            f"<button id=copy>Copy LaTeX</button><span class=muted>Source: <code>{E(str(tex.relative_to(REPO)))}</code></span></div>"
+            + (f"<iframe src='lr_gowu.pdf#view=FitH' title='LR-GoWU algorithm PDF' "
+               f"style='width:100%;height:88vh;border:1px solid var(--line);border-radius:10px;background:#fff'></iframe>"
+               if pdf.exists() else "<p class=muted>PDF not built (tectonic not found).</p>")
+            + f"<h2>LaTeX source</h2><pre id=src>{E(src)}</pre>")
+    script = ("<script>document.getElementById('copy').onclick=e=>navigator.clipboard.writeText("
+              "document.getElementById('src').textContent).then(()=>{e.target.textContent='Copied';"
+              "setTimeout(()=>e.target.textContent='Copy LaTeX',1500)})</script>")
+    (d / "index.html").write_text(shell("LR-GoWU algorithm", body, script))
 
 
 def stepAt(rows, x):

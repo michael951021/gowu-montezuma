@@ -1,0 +1,251 @@
+% LR-GoWU pseudo-algorithms, written in the style of Mhammedi & Cohan (2026), Algorithms 1-2.
+% Describes the code at commit d33407c (iteration v2; v2-resume runs the same algorithm).
+% Build: tectonic lr_gowu.tex   (scripts/build_research_page.py does this and publishes the PDF on the hub)
+\documentclass[10pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{booktabs,tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks,linkcolor=blue!60!black,urlcolor=blue!60!black}
+
+\definecolor{cmt}{RGB}{90,100,200}
+\algrenewcommand\algorithmiccomment[1]{\hfill{\color{cmt}\footnotesize\texttt{// #1}}}
+\newcommand{\LComment}[1]{\State{\color{cmt}\footnotesize\texttt{/* #1 */}}}
+\algrenewcommand\alglinenumber[1]{\footnotesize #1:}
+\algnewcommand\algorithmicinput{\textbf{input:}}
+\algnewcommand\algorithmicparams{\textbf{params:}}
+\algnewcommand\Input{\item[\algorithmicinput]}
+\algnewcommand\Params{\item[\algorithmicparams]}
+\algnewcommand{\IfThen}[2]{\State \algorithmicif\ #1\ \algorithmicthen\ #2}
+\algnewcommand{\IfThenElse}[3]{\State \algorithmicif\ #1\ \algorithmicthen\ #2\ \algorithmicelse\ #3}
+\renewcommand{\thealgorithm}{\arabic{algorithm}$'$}
+
+\newcommand{\cA}{\mathcal{A}}
+\newcommand{\cE}{\mathcal{E}}
+\newcommand{\lexargmax}{\operatorname*{lex\text{-}argmax}}
+\newcommand{\cell}{\mathrm{cell}}
+\newcommand{\Anc}{\mathrm{Anc}}
+\newcommand{\Elig}{\textsc{Eligible}}
+\newcommand{\Reach}{\textsc{Reach}}
+\newcommand{\Unif}{\mathrm{Unif}}
+\newcommand{\succr}{\mathrm{succ}}
+\newcommand{\Dead}{\textsc{Dead}}
+\newcommand{\Alive}{\textsc{Alive}}
+\newcommand{\proc}[1]{\textsc{#1}}
+
+\title{LR-GoWU: Learned-Return Go-With-Uncertainty\\[2pt]\large Pseudo-algorithms (iteration v2, commit \texttt{d33407c})}
+\date{}
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+
+\paragraph{Idea.} GoWU \cite{gowu} redistributes particles by \emph{restoring} emulator states
+(\proc{Reset}$(p_\text{target}, p_\text{source})$). LR-GoWU keeps GoWU's winner selection, group
+consolidation, global synchronization and rollback, but never restores a state: every episode starts at
+$s_0 = \cE.\textsc{reset}()$ and a learned goal-conditioned \emph{return policy} $\pi_R$ walks to the selected
+landmark. Exploration with GoWU's particle policy starts only after this \emph{handoff}. The search tree of
+checkpoints becomes an archive of \emph{landmarks}, one per discretized cell. The archive supplies
+hindsight demonstrations that $\pi_R$ imitates. The output is a deployable policy (run $\pi_R$ from reset),
+not only a trajectory. The primed numbers mark the counterpart of the paper's algorithm.
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}\toprule
+\textbf{GoWU (paper)} & \textbf{LR-GoWU (here)}\\\midrule
+particle $p_i$ on a simulator checkpoint & episode slot $i$, always started from $s_0$\\
+$\proc{Reset}(p_i, v)$ & return phase: $\pi_R$ walks to landmark $g$ (Alg.~\ref{alg:episode}, l.~\ref{ln:ret}--\ref{ln:explore})\\
+lineage tree $\mathcal{T}$, node $v=(s_v, R_v, u_v)$ & landmark archive $\cA$, one landmark per cell (Alg.~\ref{alg:archive})\\
+outer step of $T_i$ inner steps & explore phase after handoff (Alg.~\ref{alg:episode}, l.~\ref{ln:explore}--\ref{ln:end})\\
+$\mathcal{T}.\proc{AddChild}(p_i)$ & $\proc{UpdateArchive}$ on every alive step\\
+winner reset of \Dead\ particles & next goal of a dead slot $\leftarrow$ group winner (Alg.~\ref{alg:main}, l.~\ref{ln:winner})\\
+rollback when \emph{all} particles die & rollback when returns to a landmark keep failing (Alg.~\ref{alg:return})\\
+\bottomrule\end{tabular}
+\end{center}
+
+\section*{Terms and definitions}
+\small
+\begin{tabularx}{\linewidth}{@{}p{3.1cm}X@{}}\toprule
+$\cell(s)$ & Discretization of a state, read from RAM: $(\text{level}, \text{room}, \#\text{keys held}, \lfloor x/16\rfloor, \lfloor y/16\rfloor)$.\\
+Landmark $c$ & The best state seen so far in one cell. It stores the frame $f_c$ ($84{\times}84$ grey), the cumulative extrinsic reward $R_c$ of the episode when it was stored, the uncertainty $U_c$, the parent landmark $u_c$, the depth $d_c$ and the return statistics below. Landmarks are replaced, never removed.\\
+Archive $\cA$ & The set of landmarks. Its root $c_0 = \cell(s_0)$ has $R_{c_0} = 0$.\\
+$U(f)$ & Epistemic uncertainty: RND prediction error on one frame, shared by all slots. Stored values $U_c$ are \emph{re-scored} with the current RND whenever they enter a comparison.\\
+$\succ^{\text{lex}}$, $\lexargmax$ & As in the paper: $(b,c) \succ^{\text{lex}} (b',c')$ iff $b > b'$ or ($b = b'$ and $c > c'$). $\lexargmax_{c \in S}(R_c, U_c)$ is the landmark with the highest $R$, and among those the highest re-scored $U$.\\
+$\Dead$ & A step is $\Dead$ if a life is lost, the game is over, or the exploit guard fires (the middle-room key bug; its reward is zeroed). A $\Dead$ step ends the episode. All other steps are $\Alive$.\\
+$\Reach(s, R, g)$ & $\cell(s) = g$ and $R \ge R_g$: the agent stands in $g$'s cell with at least $g$'s reward.\\
+$\Anc_k(g)$ & The $k$-th ancestor of $g$ via parent pointers ($\Anc_1(g) = u_g$), clamped to the farthest existing ancestor. $\Anc_{\le D}(g)$ is the list of the $D = 32$ nearest ancestors.\\
+Demo of $c$ & An episode prefix $\tau[0{:}t]$ from $s_0$ to the episode's first step in $c$ with $R \ge R_c$. Each landmark keeps its top 4 demos ranked by ($R$ desc., length asc.).\\
+Return statistics of $g$ & $W_g$: the last ${\le}64$ return outcomes ($1$ = reached, $0$ = failed or died), with $\succr(g) = \text{mean}(W_g)$. Also: $\ell_g$, the EMA of successful return lengths; the counters $n^{\text{tgt}}_g$ (episodes that targeted $g$), $n^{\text{reach}}_g$, $n^{\text{hand}}_g$ (handoffs at $g$) and $n^{\text{qd}}_g$ (handoffs followed by death within 8 steps).\\
+$\Elig(g)$ & The root is always eligible. Any other $g$ is \emph{ineligible} if ($n^{\text{tgt}}_g \ge 32$, $n^{\text{reach}}_g = 0$ and $g$ has no demo), or if ($n^{\text{hand}}_g \ge 16$ and $n^{\text{qd}}_g > 0.9\, n^{\text{hand}}_g$). $\proc{Fallback}(g)$ returns the first eligible landmark in $(g, \Anc_1(g), \Anc_2(g), \ldots)$, else $c_0$.\\
+Slots, groups & $E = 128$ episode slots run in lockstep, in $M = 4$ groups $G_1..G_M$ of $N = 32$ slots. Group $m$ has a goal $g_m$, the set $I_m$ of landmarks its slots improved since its last consolidation, an episode counter $n_m$ and a target $K_m$. Slot $i$ has a next goal $\nu_i$.\\
+$I$ & The landmarks improved (created or replaced) by the current episode.\\
+$\pi_R$, $V_R$ & Goal-conditioned actor-critic. Input: image $x_t$ (4-frame stack, frame at the last reward, goal frame $f_g$; 6 channels) and context $\kappa_t = (\mathbf{1}[\Anc_{\le 32}(g) \text{ visited this episode}],\ \mathrm{clip}((R_g - R_t)/1000, 0, 5),\ t/5000)$. Separate IMPALA encoders for $\pi_R$ and $V_R$.\\
+$\beta_t$ & Logit temperature (entropy boost): $\beta_t = 1 + (0.01 \max(0,\, t - t_{\text{prog}} - 100))^2$, where $t_{\text{prog}}$ is the last step at which the episode entered a cell for the first time.\\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\begin{algorithm}[H]
+\caption{\proc{RunEpisode} (one episode of slot $i$; replaces one particle's outer step)}\label{alg:episode}
+\begin{algorithmic}[1]
+\Input goal landmark $g \in \cA$, return policy $\pi_R$, uncertainty $U$
+\Params return timeout $(\mu, b) = (2, 200)$, return stall $500$, explore budget $1000$, explore stall $300$,\\
+\hspace*{3.2em}episode cap $T_{\max} = 5000$, hold length $[h_{\min}, h_{\max}] = [5, 15]$, $\epsilon = 0.2$, quick death $8$
+\State $s \gets \cE.\textsc{reset}()$;\ $R \gets 0$;\ $\tau \gets (s)$;\ $I \gets \emptyset$;\ $t \gets 0$;\ $n^{\text{tgt}}_g \gets n^{\text{tgt}}_g + 1$ \Comment{no restore: always from $s_0$}
+\If{$\cell(s) = g$ and $R_g \le 0$}\label{ln:triv} \Comment{goal is the start cell (e.g. root)}
+  \State $n^{\text{reach}}_g, n^{\text{hand}}_g \gets n^{\text{reach}}_g{+}1, n^{\text{hand}}_g{+}1$;\ $t_h \gets 0$;\ \textbf{goto} line~\ref{ln:explore} \Comment{no return attempt is recorded}
+\EndIf
+\LComment{Return phase: replaces Reset$(p_i, v)$ by walking to $g$}
+\State $L \gets \ell_g$ if defined\label{ln:ret}, else length of $g$'s best demo, else $1000$
+\For{$t = 1, 2, \ldots$}
+  \State $a_t \sim \pi_R(\cdot \mid x_t, \kappa_t)$ at temperature $\beta_t$
+  \State $s, r, \textit{dead} \gets \cE.\textsc{step}(a_t)$;\ $R \gets R + r$;\ append $(a_t, s)$ to $\tau$
+  \IfThen{\textbf{not} \textit{dead}}{$I \gets I \cup \proc{UpdateArchive}(s, R, \tau, i)$} \Comment{Algorithm \ref{alg:archive}}
+  \State $r^R_t \gets \mathbf{1}[\Reach(s,R,g) \wedge \neg\textit{dead}] + 0.1\cdot\#\{\text{ancestors in } \Anc_{\le 32}(g) \text{ first visited at } t\} + 0.1\,\mathrm{sign}(r)$
+  \If{\textit{dead}}
+    \State $\proc{RecordReturn}(g, 0)$;\ \Return $(\tau, I, \Dead)$ \Comment{Algorithm \ref{alg:return}}
+  \ElsIf{$\Reach(s, R, g)$}
+    \State $\proc{RecordReturn}(g, 1)$;\ $\ell_g \gets 0.9\,\ell_g + 0.1\,t$;\ $n^{\text{hand}}_g \gets n^{\text{hand}}_g + 1$;\ $t_h \gets t$;\ \textbf{break} \Comment{handoff}
+  \ElsIf{$t \ge \mu L + b$ \textbf{or} $t - t_{\text{prog}} \ge 500$ \textbf{or} $t \ge T_{\max}$}
+    \State $\proc{RecordReturn}(g, 0)$;\ $t_h \gets \bot$ \Comment{failed: explore from here anyway}
+    \IfThen{$t \ge T_{\max}$}{\Return $(\tau, I, \Alive)$}
+    \State \textbf{break}
+  \EndIf
+\EndFor
+\LComment{Explore phase: GoWU's particle policy (held random action)}
+\State $t_0 \gets t$;\ $t_{\text{imp}} \gets t$;\ $h \gets 0$\label{ln:explore} \Comment{$\approx$ Alg.~1, l.~4--12}
+\Repeat
+  \IfThen{$h = 0$}{$a_{\text{hold}} \sim \Unif(\cA_{\text{act}})$;\ $h \sim \Unif\{h_{\min}, \ldots, h_{\max}\}$}
+  \State $a_t \gets a_{\text{hold}}$;\ $h \gets h - 1$;\ with probability $\epsilon$: $a_t \sim \Unif(\cA_{\text{act}})$
+  \State $t \gets t + 1$;\ $s, r, \textit{dead} \gets \cE.\textsc{step}(a_t)$;\ $R \gets R + r$;\ append $(a_t, s)$ to $\tau$
+  \If{\textit{dead}}
+    \IfThen{$t_h \ne \bot$ \textbf{and} $t - t_h \le 8$}{$n^{\text{qd}}_g \gets n^{\text{qd}}_g + 1$} \Comment{feeds the doomed-landmark gate}
+    \State \Return $(\tau, I, \Dead)$
+  \EndIf
+  \State $J \gets \proc{UpdateArchive}(s, R, \tau, i)$;\ $I \gets I \cup J$;\ \textbf{if} $J \ne \emptyset$ \textbf{then} $t_{\text{imp}} \gets t$
+\Until{$t - t_0 \ge 1000$ \textbf{or} $t - t_{\text{imp}} \ge 300$ \textbf{or} $t \ge T_{\max}$}
+\State \Return $(\tau, I, \Alive)$\label{ln:end}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{\proc{UpdateArchive} (every \Alive\ step; replaces $\mathcal{T}.\proc{AddChild}$)}\label{alg:archive}
+\begin{algorithmic}[1]
+\Input state $s$ (frame $f$), episode reward $R$, trajectory $\tau = \tau[0{:}t]$, slot $i$ in group $m$
+\Params $U$ hysteresis $\eta = 0.1$, demos per landmark $4$, demo store cap 12\,GB
+\State $c \gets \cell(s)$;\ $c_{\text{prev}} \gets \cell(s_{t-1})$
+\IfThen{$c \in \cA$ \textbf{and} $R = R_c$}{$U_c \gets U(f_c)$} \Comment{re-score the incumbent with the current RND}
+\If{$c \notin \cA$ \textbf{or} $R > R_c$ \textbf{or} ($R = R_c$ \textbf{and} $U(f) > (1+\eta)\,U_c$)} \Comment{$(R, U) \succ^{\text{lex}} (R_c, U_c)$ with hysteresis}
+  \If{$c \notin \cA$}
+    \State $u_c \gets c_{\text{prev}}$ if $c_{\text{prev}} \ne c$, else none;\ $d_c \gets d_{u_c} + 1$ (or $0$) \Comment{parent fixed at creation}
+  \ElsIf{$R > R_c$}
+    \State drop $c$'s demos, $W_c$ and $\ell_c$ \Comment{old routes no longer earn $R_c$}
+  \EndIf
+  \State $(f_c, R_c, U_c) \gets (f, R, U(f))$;\ $J \gets \{c\}$;\ $I_m \gets I_m \cup \{c\}$ \Comment{$I_m$ grows live, not at episode end}
+\Else
+  \State $J \gets \emptyset$
+\EndIf
+\LComment{Hindsight demonstration}
+\If{this is the first step of $\tau$ in $c$ with $R \ge R_c$ \textbf{and} $t > 0$}
+  \State offer $\tau[0{:}t]$ as a demo of $c$;\ keep the top 4 by ($R$ desc., $t$ asc.) \Comment{only first demos once store is full}
+\EndIf
+\State \Return $J$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{\proc{RecordReturn} (after every return attempt; failure recovery via rollback)}\label{alg:return}
+\begin{algorithmic}[1]
+\Input landmark $g$, outcome $o \in \{0, 1\}$
+\Params window $w = 64$, success threshold $\rho = 0.05$, rollback range $[k_{\min}, k_{\max}] = [1, 3]$
+\State append $o$ to $W_g$ (keep the last $w$);\ \textbf{if} $o = 1$ \textbf{then} $n^{\text{reach}}_g \gets n^{\text{reach}}_g + 1$
+\If{$|W_g| = w$ \textbf{and} $\succr(g) < \rho$} \Comment{$\approx$ Alg.~1, l.~14--17}
+  \For{each group $m$ with $g_m = g$}
+    \State $k \sim \Unif\{k_{\min}, \ldots, k_{\max}\}$;\ $g_m \gets \Anc_k(g)$;\ $\nu_j \gets g_m$ for all $j \in G_m$ \Comment{see Remark 1}
+  \EndFor
+  \State $W_g \gets \emptyset$ \Comment{cleared even if no group targets $g$}
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{LR-GoWU (replaces GoWU's population loop)}\label{alg:main}
+\begin{algorithmic}[1]
+\Input environment $\cE$, $E = 128$ slots in $M = 4$ groups
+\Params consolidation $[K_{\min}, K_{\max}] = [16, 32]$ episodes, mixing $p_{\text{mix}} = 0.1$, unroll $T = 128$
+\State Initialize $\cA \gets \{c_0\}$ with $(f_{c_0}, 0, U(f_{c_0}))$;\ $\pi_R$, $V_R$;\ shared RND $U$ and its frame replay
+\State $g_m \gets c_0$, $I_m \gets \emptyset$, $n_m \gets 0$, $K_m \sim \Unif\{K_{\min}..K_{\max}\}$ for all $m$;\ $\nu_i \gets g_{m(i)}$ for all $i$
+\Loop \Comment{all $E$ slots step in lockstep}
+  \For{$T$ steps}
+    \For{each slot $i$ in group $m$ \textbf{in parallel}}
+      \If{slot $i$ has no running episode} \Comment{episode start}
+        \State $g \gets \nu_i$;\ \textbf{if not} $\Elig(g)$ \textbf{then} $g \gets \proc{Fallback}(g_m)$ \Comment{falls back from the group goal}
+        \State start $\proc{RunEpisode}(g)$ in slot $i$ \Comment{Algorithm \ref{alg:episode}}
+      \EndIf
+      \State advance slot $i$'s episode by one environment step
+      \IfThen{the episode is still running}{\textbf{continue}}
+      \LComment{Episode end with $(\tau, I, \text{status})$: choose the next goal}
+      \If{$\Unif(0,1) < p_{\text{mix}}$}\label{ln:choose}
+        \State $\nu_i \sim \{c \in \cA : \Elig(c)\}$ with probability $\propto 1/\sqrt{n^{\text{tgt}}_c + 1}$ \Comment{count-based mixing}
+      \ElsIf{status $= \Alive$ \textbf{and} $I \cap \Elig \ne \emptyset$}
+        \State $\nu_i \gets \lexargmax_{c \in I \cap \Elig}(R_c, U_c)$ \Comment{survivor continues; $\approx$ Alg.~1, l.~10--11}
+      \Else
+        \State\label{ln:winner} $\nu_i \gets \proc{Winner}(m) := \lexargmax_{c \in \{g_m\} \cup (I_m \cap \Elig)}(R_c, U_c)$ \Comment{$\approx$ Alg.~1, l.~23}
+      \EndIf
+      \State $n_m \gets n_m + 1$\label{ln:choose-end}
+      \If{$n_m \ge K_m$} \Comment{group consolidation; $\approx$ Alg.~1, l.~29--30}
+        \State $g_m \gets \proc{Winner}(m)$;\ $\nu_j \gets g_m$ for all $j \in G_m$ \Comment{see Remark 1}
+        \State $I_m \gets \emptyset$;\ $n_m \gets 0$;\ $K_m \sim \Unif\{K_{\min}..K_{\max}\}$
+        \State $g^\star \gets \lexargmax_{k \le M}(R_{g_k}, U_{g_k})$ \Comment{global sync; $\approx$ Alg.~2, l.~8--10, 16}
+        \For{each group $k$ with $R_{g_k} < R_{g^\star}$}
+          \State $g_k \gets g^\star$;\ $\nu_j \gets g^\star$ for all $j \in G_k$
+        \EndFor
+      \EndIf
+    \EndFor
+  \EndFor
+  \LComment{Learning, once per unroll of $T \cdot E$ = 16{,}384 agent steps}
+  \State \textbf{PPO} on the unroll's return-phase steps only, reward $r^R$ (skipped if fewer than 256)
+  \State \hspace{1em} terminal at $\Reach$ or \Dead;\ return timeout/stall bootstraps from $\gamma V_R(s_{t+1})$
+  \State \textbf{BC}: 8 minibatches of 512 $(x_j, \kappa_j) \to a_j$ from demos: landmark $c \propto 1 - \succr(c)$,
+  \State \hspace{1em} skipping $c$ with $|W_c| \ge 8$ and $\succr(c) \ge 0.8$;\ demo uniform among $c$'s;\ $j \sim \Unif\{0..t_{\text{arr}}{-}1\}$
+  \State \textbf{RND}: $31$ updates per $1000$ agent steps on batches of $128$ frames from the $512$k replay
+\EndLoop
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Remark 1 (consolidation, sync and rollback only partly redirect slots).} A slot's next goal
+$\nu_i$ is chosen when its episode ends (Alg.~\ref{alg:main}, l.~\ref{ln:choose}--\ref{ln:choose-end}). The writes ``$\nu_j \gets g_m$''
+in consolidation, global sync and rollback therefore last only until slot $j$'s own episode ends, which
+overwrites them. They take effect only for the slot that triggered the consolidation. Otherwise these
+operations act through $g_m$: it is part of the winner set of every dead slot, and it is the fallback for
+ineligible goals. Unlike GoWU (Alg.~1, l.~30), \Alive\ slots that improved a landmark keep following their
+own frontier after a consolidation. After a rollback, the winner of a dead slot may still be a high-$R$
+landmark from $I_m$ rather than the ancestor.
+
+\paragraph{Remark 2 (where the counters change).} $n^{\text{tgt}}_g$ counts episodes at their start, after
+the eligibility fallback. $W_g$ counts every return attempt, including deaths, but not the trivial handoff
+of Alg.~\ref{alg:episode}, l.~\ref{ln:triv}. An $R$-improvement of $g$ resets $W_g$, $\ell_g$ and the demos,
+but not $n^{\text{tgt}}_g$, $n^{\text{reach}}_g$, $n^{\text{hand}}_g$ or $n^{\text{qd}}_g$.
+
+\section*{Hyperparameters (v2)}
+\small
+\begin{tabularx}{\linewidth}{@{}lX@{}}\toprule
+Environment & Montezuma's Revenge, sticky actions 0.25, 18 actions, episode ends at the first life loss, cap 5000 steps\\
+Archive & cell $(\text{level}, \text{room}, \#\text{keys}, \lfloor x/16\rfloor, \lfloor y/16\rfloor)$; $U$ hysteresis $0.1$; top-4 demos; 12\,GB demo store\\
+RND & Nature torso + 1024-1024 head, input-normalized, lr $3\times10^{-4}$, batch 128, 31 updates / 1k agent steps, replay 512k\\
+$\pi_R$, $V_R$ & IMPALA ResNet (16-32-32, 1024-d), separate for $\pi_R$ and $V_R$; heads $1024{+}34 \to 512 \to 18$ / $1$; bf16\\
+PPO & $\gamma = 0.99$, $\lambda = 0.95$, lr $10^{-4}$, clip $0.1$, 1 epoch, 8 minibatches, entropy $10^{-3}$, value $0.5$, grad-norm $0.5$\\
+Return reward & $1$ on reaching $g$, $0.1$ per new ancestor, $0.1\,\mathrm{sign}(r)$\\
+BC & alternating with PPO, 8 $\times$ 512 per update, cross-entropy, filter $\succr \ge 0.8$ after 8 attempts\\
+Selection & $M = 4$, $N = 32$, $K \in [16, 32]$ episodes, $p_{\text{mix}} = 0.1$, rollback window 64, $\rho = 0.05$, $k \in [1, 3]$\\
+Eligibility & unreachable gate 32 targets; doomed gate $\ge 16$ handoffs with $> 90\%$ dying within 8 steps\\
+Explore & held random action, hold $\in [5, 15]$, $\epsilon = 0.2$, budget 1000, stall 300\\
+\bottomrule
+\end{tabularx}
+
+\begin{thebibliography}{1}\small
+\bibitem{gowu} Z.~Mhammedi and J.~Cohan. \emph{Decoupling Exploration and Policy Optimization: Uncertainty Guided Tree Search for Hard Exploration.} arXiv:2603.22273, 2026.
+\end{thebibliography}
+\end{document}
