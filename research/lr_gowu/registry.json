@@ -146,6 +146,27 @@
           "dir": "runs/lr_v2_resume_20261028/b"
         }
       ]
+    },
+    {
+      "id": "v2-inflives",
+      "label": "LR v2 \u00b7 infinite lives",
+      "date": "2026-10-30",
+      "commit": "e2d46ef",
+      "arch": "v2-inflives",
+      "slot": 7,
+      "compare_to": "v2-resume",
+      "change": "Baseline B2\u2032 (PLAN \u00a77): v2 with infinite lives (ram_refill). A life loss no longer ends the episode: during return it counts as a failure, and exploration continues from the respawn point. Warm-started from v2's ~122M checkpoint, same as v2-resume. Caveat: MR respawns at the room entrance, which is a free local reset, so this is not comparable to GoWU.",
+      "verdict": "Running (queued 2026-10-30 10:14).",
+      "runs": [
+        {
+          "seed": 0,
+          "dir": "runs/lr_v2_inflives_20261030/a"
+        },
+        {
+          "seed": 1,
+          "dir": "runs/lr_v2_inflives_20261030/b"
+        }
+      ]
     }
   ]
 }
