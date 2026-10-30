@@ -58,8 +58,15 @@ def gowu_series(run_dir: Path):
                       "fps": last.get("fps")}}
 
 
-def lr_series(run_dir: Path):
-    recs = read_log(run_dir / "log.jsonl")
+def lr_series(run_dir: Path, continued=()):
+    """One seed's curve. `continued`: later run dirs that resumed this one; their logs are appended (records at or
+    before the last frame count already seen are dropped) and the last one's eval is the run's eval."""
+    recs, hours = read_log(run_dir / "log.jsonl"), 0.0
+    for c in continued:
+        hours += recs[-1].get("time", 0) if recs else 0
+        upto = recs[-1]["frames"] if recs else -1
+        recs += [r for r in read_log(c / "log.jsonl") if r["frames"] > upto]
+        run_dir = c
     rows, win = [], []
     for r in recs:
         if r.get("ret_attempts"):
@@ -78,7 +85,7 @@ def lr_series(run_dir: Path):
     return {"rows": thin(rows, [1, 2, 3]),
             "cols": ["frames", "best_R", "rooms", "landmarks", "ret_success", "return_share", "ep_R"],
             "final": {"frames": last.get("frames"), "best_R": last.get("max_R"), "rooms": last.get("rooms"),
-                      "landmarks": last.get("n_landmarks"), "fps": last.get("fps"), "hours": last.get("time", 0) / 3600,
+                      "landmarks": last.get("n_landmarks"), "fps": last.get("fps"), "hours": (hours + last.get("time", 0)) / 3600,
                       "timing": last.get("timing")},
             "eval": ev}
 
@@ -309,8 +316,8 @@ def build(out: Path):
             d = REPO / r["dir"]
             if not (d / "log.jsonl").exists():
                 continue
-            s = gowu_series(d) if kind == "gowu" else lr_series(d)
-            s.update(seed=r["seed"], dir=str(d), config=load_config(d))
+            s = gowu_series(d) if kind == "gowu" else lr_series(d, [REPO / c for c in r.get("continued", [])])
+            s.update(seed=r["seed"], dir=str(d), config=load_config(d), continued=r.get("continued", []))
             runs.append(s)
         fams.append({**f, "kind": kind, "color": f"--s{((f.get('slot') or k + 1) - 1) % 8 + 1}", "step": True, "runs": runs})
 
@@ -425,7 +432,8 @@ GoWU's comparable number would be its Phase II (robustified) score, which we hav
                      "</table></div>" if ch else "<p class=muted>No config differences.</p>") +
                     f"<h3>Code (<code>git diff --stat {E(prev['commit'])}..{E(f['commit'])}</code>)</h3>" +
                     (f"<pre>{E(stat)}</pre>" if stat else "<p class=muted>Same commit.</p>"))
-        seeds = ", ".join(f"s{r['seed']}: <code>{E(r['dir'])}</code>" for r in f["runs"])
+        seeds = ", ".join(f"s{r['seed']}: <code>{E(r['dir'])}</code>"
+                          + "".join(f" → <code>{E(c)}</code>" for c in r.get("continued", [])) for r in f["runs"])
         body = (f"<p><a href='/{out.name}/'>← LR-GoWU research</a></p><h1>{E(f['label'])}</h1>"
                 f"<div class=sub>{E(f['date'])} · commit <code>{E(f['commit'])}</code> · <span class=chip>{E(f['id'])}</span></div>"
                 f"<p><b>What changed:</b> {E(f.get('change') or f.get('about', ''))}<br><b>Verdict:</b> {E(f.get('verdict', ''))}</p>"

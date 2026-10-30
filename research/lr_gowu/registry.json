@@ -112,40 +112,25 @@
       "date": "2026-10-27",
       "commit": "d33407c",
       "arch": "v2",
-      "change": "Gate spares landmarks with demos; ineligible goals fall back to the nearest eligible ancestor; doomed gate needs 16 handoffs.",
-      "verdict": "6 rooms, 2,500 by ~35M frames and a robust policy (eval mean 2,350-2,500), then flat for 80M frames: 90% of frames go to return trips and random bursts can't clear the next room.",
+      "change": "Gate spares landmarks with demos; ineligible goals fall back to the nearest eligible ancestor; doomed gate needs 16 handoffs. Ran 122M frames, then was resumed from that checkpoint (commit 4856311: network, RND, landmark archive; demos and Adam moments rebuilt, 50-update lr warm-up) to ~250M.",
+      "verdict": "6 rooms, 2,500 by ~35M frames and a robust policy, then flat to ~250M frames (still 2,500, same 6 rooms, landmarks +9 / +1 after the resume). 90% of frames go to return trips and random bursts can't clear the next room. Returns kept improving (success 82-96%, BC acc ~0.93) while entropy fell 0.65 -> 0.23; final eval mean 2,425 / 2,500. The bottleneck is exploration past the handoff, not the return policy.",
       "runs": [
         {
           "seed": 0,
-          "dir": "runs/lr_test2_20261027/a"
+          "dir": "runs/lr_test2_20261027/a",
+          "continued": [
+            "runs/lr_v2_resume_20261028/a"
+          ]
         },
         {
           "seed": 1,
-          "dir": "runs/lr_test2_20261027/b"
+          "dir": "runs/lr_test2_20261027/b",
+          "continued": [
+            "runs/lr_v2_resume_20261028/b"
+          ]
         }
       ],
       "slot": 4
-    },
-    {
-      "id": "v2-resume",
-      "label": "LR v2 \u00b7 resumed",
-      "date": "2026-10-28",
-      "commit": "4856311",
-      "arch": "v2",
-      "slot": 6,
-      "compare_to": "v2",
-      "change": "Same v2 algorithm and config, continued from v2's ~122M-frame checkpoint (network, RND, landmark archive). Demos and optimizer moments rebuilt; 50-update lr warm-up.",
-      "verdict": "Warm start held (no regression), but flat from 122M to ~250M: still 2,500 and the same 6 rooms; landmarks +9 / +1. Returns got better (success 82-96%, BC acc ~0.93) while policy entropy fell 0.65 -> 0.23. Eval mean 2,425 / 2,500. More frames alone don't help: the bottleneck is exploration past the handoff, not the return policy.",
-      "runs": [
-        {
-          "seed": 0,
-          "dir": "runs/lr_v2_resume_20261028/a"
-        },
-        {
-          "seed": 1,
-          "dir": "runs/lr_v2_resume_20261028/b"
-        }
-      ]
     },
     {
       "id": "v2-inflives",
@@ -154,8 +139,8 @@
       "commit": "e2d46ef",
       "arch": "v2-inflives",
       "slot": 7,
-      "compare_to": "v2-resume",
-      "change": "Baseline B2\u2032 (PLAN \u00a77): v2 with infinite lives (ram_refill). A life loss no longer ends the episode: during return it counts as a failure, and exploration continues from the respawn point. Warm-started from v2's ~122M checkpoint, same as v2-resume. Caveat: MR respawns at the room entrance, which is a free local reset, so this is not comparable to GoWU.",
+      "compare_to": "v2",
+      "change": "Baseline B2\u2032 (PLAN \u00a77): v2 with infinite lives (ram_refill). A life loss no longer ends the episode: during return it counts as a failure, and exploration continues from the respawn point. Warm-started from v2's ~122M checkpoint, same as v2's resumed segment. Caveat: MR respawns at the room entrance, which is a free local reset, so this is not comparable to GoWU.",
       "verdict": "Running (queued 2026-10-30 10:14).",
       "runs": [
         {

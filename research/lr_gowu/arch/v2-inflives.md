@@ -1,7 +1,7 @@
 # LR-GoWU v2 · infinite lives: architecture at commit `e2d46ef`
 
 Frozen snapshot of what the infinite-lives baseline runs (`runs/lr_v2_inflives_20261030/{a,b}`) executed:
-v2 with `lives_mode=ram_refill` (PLAN §7, baseline B2′), warm-started from v2's ~122M-frame checkpoint like v2-resume.
+v2 with `lives_mode=ram_refill` (PLAN §7, baseline B2′), warm-started from v2's ~122M-frame checkpoint (as v2's own resumed segment was).
 Caveat to state with any result: in MR you respawn at the room's entry point, so each death is a free local reset to
 the room entrance. The result is not comparable to GoWU, where a death ends the episode. Later iterations get their
 own file; this one is not edited after the fact. Code: `gowu/lr/{trainer,archive,net}.py`. Plan: `docs/PLAN_LR_GOWU.md`.
