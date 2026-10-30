@@ -610,7 +610,7 @@ class LRGoWU:
         else:
             dead = go | exploit
             if cfg.lives_mode == "ram_refill" and ll.any():
-                self.pool.set_lives([(int(i), 6) for i in np.where(ll)[0]])
+                self.pool.set_lives([(int(i), 5) for i in np.where(ll)[0]])   # ram[58] = 5 at reset (ale.lives() reports 6)
         ret_fail_life = ll & ~dead      # infinite lives: a life loss during return is a failure
 
         slots = np.array([arch.slot(rams[i]) for i in range(E)])
