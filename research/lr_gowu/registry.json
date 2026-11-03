@@ -1,157 +1,180 @@
 {
-  "_doc": "One entry per run family shown on the hub page (scripts/build_research_page.py). Add a new iteration as a NEW entry with its own arch/<id>.md snapshot; never edit a finished iteration's runs or arch file unless explicitly replacing it. `slot` pins the family's chart colour (1-8); give a new family the next unused slot so existing lines keep their colour.",
-  "baselines": [
+ "_doc": "One entry per run family shown on the hub page (scripts/build_research_page.py). Add a new iteration as a NEW entry with its own arch/<id>.md snapshot; never edit a finished iteration's runs or arch file unless explicitly replacing it. `slot` pins the family's chart colour (1-8); give a new family the next unused slot so existing lines keep their colour.",
+ "baselines": [
+  {
+   "id": "gowu-p1",
+   "label": "GoWU Phase I (ours)",
+   "kind": "gowu",
+   "date": "2026-10-27",
+   "commit": "3eb9614",
+   "about": "Our GoWU reproduction, paper v4 defaults, restores emulator states. Best trajectory found so far (not a deployable policy). Seeds 8/9 were stopped at 100M by the campaign's early-stop rule.",
+   "runs": [
     {
-      "id": "gowu-p1",
-      "label": "GoWU Phase I (ours)",
-      "kind": "gowu",
-      "date": "2026-10-27",
-      "commit": "3eb9614",
-      "about": "Our GoWU reproduction, paper v4 defaults, restores emulator states. Best trajectory found so far (not a deployable policy). Seeds 8/9 were stopped at 100M by the campaign's early-stop rule.",
-      "runs": [
-        {
-          "seed": 6,
-          "dir": "runs/big_v4_400m_20261027/seed6"
-        },
-        {
-          "seed": 7,
-          "dir": "runs/big_v4_400m_20261027/seed7"
-        },
-        {
-          "seed": 8,
-          "dir": "runs/big_v4_400m_20261027/seed8"
-        },
-        {
-          "seed": 9,
-          "dir": "runs/big_v4_400m_20261027/seed9"
-        }
-      ],
-      "slot": 1
+     "seed": 6,
+     "dir": "runs/big_v4_400m_20261027/seed6"
     },
     {
-      "id": "gowu-trapfix",
-      "label": "GoWU Phase I + trap fix",
-      "kind": "gowu",
-      "date": "2026-10-28",
-      "commit": "c0ffe06",
-      "arch": "gowu-trapfix",
-      "compare_to": "gowu-p1",
-      "change": "Not in the paper: a winner confined to one room at the same R for 200 iterations marks those cells as dead states (room-8 rope-post trap).",
-      "verdict": "Fix fired once per seed in level-2 room 8 and both seeds escaped: level 3 reached at 213M / 134M (baseline: stuck at 34,200 / 39,200). ~71-72k when they first reached level 3's treasure room (302M / 252M); after that a treasure-room jewel loop (+1000 repeated, score wraps at 1,000,000) runs best R to the 999,100 cap. Everything above ~72k is the loop, not progress.",
-      "runs": [
-        {
-          "seed": 6,
-          "dir": "runs/trapfix_400m_20261028/seed6"
-        },
-        {
-          "seed": 7,
-          "dir": "runs/trapfix_400m_20261028/seed7"
-        }
-      ],
-      "slot": 5
+     "seed": 7,
+     "dir": "runs/big_v4_400m_20261027/seed7"
+    },
+    {
+     "seed": 8,
+     "dir": "runs/big_v4_400m_20261027/seed8"
+    },
+    {
+     "seed": 9,
+     "dir": "runs/big_v4_400m_20261027/seed9"
     }
-  ],
-  "paper": {
-    "label": "GoWU Phase I (paper, Fig. 6 / Table 2)",
-    "points": [
-      [
-        50000000,
-        25000
-      ],
-      [
-        100000000,
-        52500
-      ],
-      [
-        200000000,
-        80000
-      ],
-      [
-        400000000,
-        98752.5
-      ]
-    ],
-    "note": "50M/100M/200M are midpoints of ranges read off Fig. 6 (20-30k, 45-60k, 75-85k); 400M is Table 2's mean over 100 seeds."
+   ],
+   "slot": 1
   },
-  "iterations": [
+  {
+   "id": "gowu-trapfix",
+   "label": "GoWU Phase I + trap fix",
+   "kind": "gowu",
+   "date": "2026-10-28",
+   "commit": "c0ffe06",
+   "arch": "gowu-trapfix",
+   "compare_to": "gowu-p1",
+   "change": "Not in the paper: a winner confined to one room at the same R for 200 iterations marks those cells as dead states (room-8 rope-post trap).",
+   "verdict": "Fix fired once per seed in level-2 room 8 and both seeds escaped: level 3 reached at 213M / 134M (baseline: stuck at 34,200 / 39,200). ~71-72k when they first reached level 3's treasure room (302M / 252M); after that a treasure-room jewel loop (+1000 repeated, score wraps at 1,000,000) runs best R to the 999,100 cap. Everything above ~72k is the loop, not progress.",
+   "runs": [
     {
-      "id": "v1-room",
-      "label": "LR v1 \u00b7 room landmarks",
-      "date": "2026-10-27",
-      "commit": "4cd3aa0",
-      "arch": "v1",
-      "change": "First implementation. Plan default: one landmark per (level, room).",
-      "verdict": "\u03c0_R learns to fetch the key, but one landmark per room gives no foothold past it. Stuck at 100.",
-      "runs": [
-        {
-          "seed": 0,
-          "dir": "runs/lr_test1c_20261027/a"
-        }
-      ],
-      "slot": 2
+     "seed": 6,
+     "dir": "runs/trapfix_400m_20261028/seed6"
     },
     {
-      "id": "v1-xy",
-      "label": "LR v1 \u00b7 cell landmarks",
-      "date": "2026-10-27",
-      "commit": "4cd3aa0",
-      "arch": "v1",
-      "change": "Finer landmarks: (level, room, #keys, x//16, y//16).",
-      "verdict": "Reachability-gate bug excluded every key landmark after 32 early failures; everything explored from the start. Stuck at 100.",
-      "runs": [
-        {
-          "seed": 0,
-          "dir": "runs/lr_test1c_20261027/b"
-        }
-      ],
-      "slot": 3
-    },
-    {
-      "id": "v2",
-      "label": "LR v2 \u00b7 gate fix",
-      "date": "2026-10-27",
-      "commit": "d33407c",
-      "arch": "v2",
-      "change": "Gate spares landmarks with demos; ineligible goals fall back to the nearest eligible ancestor; doomed gate needs 16 handoffs. Ran 122M frames, then was resumed from that checkpoint (commit 4856311: network, RND, landmark archive; demos and Adam moments rebuilt, 50-update lr warm-up) to ~250M.",
-      "verdict": "6 rooms, 2,500 by ~35M frames and a robust policy, then flat to ~250M frames (still 2,500, same 6 rooms, landmarks +9 / +1 after the resume). 90% of frames go to return trips and random bursts can't clear the next room. Returns kept improving (success 82-96%, BC acc ~0.93) while entropy fell 0.65 -> 0.23; final eval mean 2,425 / 2,500. The bottleneck is exploration past the handoff, not the return policy.",
-      "runs": [
-        {
-          "seed": 0,
-          "dir": "runs/lr_test2_20261027/a",
-          "continued": [
-            "runs/lr_v2_resume_20261028/a"
-          ]
-        },
-        {
-          "seed": 1,
-          "dir": "runs/lr_test2_20261027/b",
-          "continued": [
-            "runs/lr_v2_resume_20261028/b"
-          ]
-        }
-      ],
-      "slot": 4
-    },
-    {
-      "id": "v2-inflives",
-      "label": "LR v2 \u00b7 infinite lives",
-      "date": "2026-10-30",
-      "commit": "e2d46ef",
-      "arch": "v2-inflives",
-      "slot": 7,
-      "compare_to": "v2",
-      "change": "Baseline B2\u2032 (PLAN \u00a77): v2 with infinite lives (ram_refill). A life loss no longer ends the episode: during return it counts as a failure, and exploration continues from the respawn point. Warm-started from v2's ~122M checkpoint, same as v2's resumed segment. Caveat: MR respawns at the room entrance, which is a free local reset, so this is not comparable to GoWU.",
-      "verdict": "Running (queued 2026-10-30 10:14).",
-      "runs": [
-        {
-          "seed": 0,
-          "dir": "runs/lr_v2_inflives_20261030/a"
-        },
-        {
-          "seed": 1,
-          "dir": "runs/lr_v2_inflives_20261030/b"
-        }
-      ]
+     "seed": 7,
+     "dir": "runs/trapfix_400m_20261028/seed7"
     }
-  ]
+   ],
+   "slot": 5
+  },
+  {
+   "id": "gwrw",
+   "label": "GWRW (route walker, fresh start)",
+   "kind": "gwrw",
+   "date": "2026-11-03",
+   "commit": "",
+   "arch": "gwrw",
+   "slot": 6,
+   "about": "montezuma_gwrw package (gwrw_cd_v1 code, unchanged), fresh start without its CKPT14 / pool seed, shipped live json, 96 games per run, two replicates to 400M frames. Pixels + reward only, no restores, sticky actions.",
+   "verdict": "Running (started 2026-11-03 13:22). Test (frozen, 192 games per run) queued after training.",
+   "runs": [
+    {
+     "seed": "a",
+     "dir": "runs/gwrw_400m_20261103",
+     "prefix": "gwrw_a"
+    },
+    {
+     "seed": "b",
+     "dir": "runs/gwrw_400m_20261103",
+     "prefix": "gwrw_b"
+    }
+   ]
+  }
+ ],
+ "paper": {
+  "label": "GoWU Phase I (paper, Fig. 6 / Table 2)",
+  "points": [
+   [
+    50000000,
+    25000
+   ],
+   [
+    100000000,
+    52500
+   ],
+   [
+    200000000,
+    80000
+   ],
+   [
+    400000000,
+    98752.5
+   ]
+  ],
+  "note": "50M/100M/200M are midpoints of ranges read off Fig. 6 (20-30k, 45-60k, 75-85k); 400M is Table 2's mean over 100 seeds."
+ },
+ "iterations": [
+  {
+   "id": "v1-room",
+   "label": "LR v1 · room landmarks",
+   "date": "2026-10-27",
+   "commit": "4cd3aa0",
+   "arch": "v1",
+   "change": "First implementation. Plan default: one landmark per (level, room).",
+   "verdict": "π_R learns to fetch the key, but one landmark per room gives no foothold past it. Stuck at 100.",
+   "runs": [
+    {
+     "seed": 0,
+     "dir": "runs/lr_test1c_20261027/a"
+    }
+   ],
+   "slot": 2
+  },
+  {
+   "id": "v1-xy",
+   "label": "LR v1 · cell landmarks",
+   "date": "2026-10-27",
+   "commit": "4cd3aa0",
+   "arch": "v1",
+   "change": "Finer landmarks: (level, room, #keys, x//16, y//16).",
+   "verdict": "Reachability-gate bug excluded every key landmark after 32 early failures; everything explored from the start. Stuck at 100.",
+   "runs": [
+    {
+     "seed": 0,
+     "dir": "runs/lr_test1c_20261027/b"
+    }
+   ],
+   "slot": 3
+  },
+  {
+   "id": "v2",
+   "label": "LR v2 · gate fix",
+   "date": "2026-10-27",
+   "commit": "d33407c",
+   "arch": "v2",
+   "change": "Gate spares landmarks with demos; ineligible goals fall back to the nearest eligible ancestor; doomed gate needs 16 handoffs. Ran 122M frames, then was resumed from that checkpoint (commit 4856311: network, RND, landmark archive; demos and Adam moments rebuilt, 50-update lr warm-up) to ~250M.",
+   "verdict": "6 rooms, 2,500 by ~35M frames and a robust policy, then flat to ~250M frames (still 2,500, same 6 rooms, landmarks +9 / +1 after the resume). 90% of frames go to return trips and random bursts can't clear the next room. Returns kept improving (success 82-96%, BC acc ~0.93) while entropy fell 0.65 -> 0.23; final eval mean 2,425 / 2,500. The bottleneck is exploration past the handoff, not the return policy.",
+   "runs": [
+    {
+     "seed": 0,
+     "dir": "runs/lr_test2_20261027/a",
+     "continued": [
+      "runs/lr_v2_resume_20261028/a"
+     ]
+    },
+    {
+     "seed": 1,
+     "dir": "runs/lr_test2_20261027/b",
+     "continued": [
+      "runs/lr_v2_resume_20261028/b"
+     ]
+    }
+   ],
+   "slot": 4
+  },
+  {
+   "id": "v2-inflives",
+   "label": "LR v2 · infinite lives",
+   "date": "2026-10-30",
+   "commit": "e2d46ef",
+   "arch": "v2-inflives",
+   "slot": 7,
+   "compare_to": "v2",
+   "change": "Baseline B2′ (PLAN §7): v2 with infinite lives (ram_refill). A life loss no longer ends the episode: during return it counts as a failure, and exploration continues from the respawn point. Warm-started from v2's ~122M checkpoint, same as v2's resumed segment. Caveat: MR respawns at the room entrance, which is a free local reset, so this is not comparable to GoWU.",
+   "verdict": "Running (queued 2026-10-30 10:14).",
+   "runs": [
+    {
+     "seed": 0,
+     "dir": "runs/lr_v2_inflives_20261030/a"
+    },
+    {
+     "seed": 1,
+     "dir": "runs/lr_v2_inflives_20261030/b"
+    }
+   ]
+  }
+ ]
 }
