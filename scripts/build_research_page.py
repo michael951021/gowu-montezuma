@@ -90,9 +90,45 @@ def lr_series(run_dir: Path, continued=()):
             "eval": ev}
 
 
+def gwrw_series(run_dir: Path, prefix: str):
+    """One GWRW run (third_party/montezuma_gwrw; several runs share a dir, files prefixed `prefix`). best_R / rooms are
+    running max score / distinct rooms (RAM room id, diagnostics only) over finished games; landmarks = archive nodes;
+    ep_R = mean score of the last 300 games. The frozen test is `<prefix>_eval_eval.json` (scripts/gwrw_eval.sh)."""
+    recs = read_log(run_dir / f"{prefix}_log.jsonl")
+    by_upd = {}
+    for e in read_log(run_dir / f"{prefix}_episodes.jsonl"):
+        b = by_upd.setdefault(e["update"], [0.0, set()])
+        b[0] = max(b[0], e["score"]); b[1].update(e.get("diag_rooms", []))
+    best, rooms, upds, rows = 0.0, set(), sorted(by_upd), []
+    j = 0
+    for r in recs:
+        while j < len(upds) and upds[j] <= r["update"]:
+            best = max(best, by_upd[upds[j]][0]); rooms |= by_upd[upds[j]][1]; j += 1
+        rows.append([r["frames"], best, len(rooms), r.get("nodes"), None, None, r.get("mean_score")])
+    last = recs[-1] if recs else {}
+    ev = None
+    if (run_dir / f"{prefix}_eval_eval.json").exists():
+        e = json.load((run_dir / f"{prefix}_eval_eval.json").open())
+        ev = [{"schedule": "frozen", "cap_frames": "game cap", "n": e["games"], "mean": e["mean"], "std": e["std"], "max": e["max"],
+               "arrived": e.get("arrived"), "rooms": e.get("rooms")}]
+    return {"rows": thin(rows, [1, 2, 3]),
+            "cols": ["frames", "best_R", "rooms", "landmarks", "ret_success", "return_share", "ep_R"],
+            "final": {"frames": last.get("frames"), "best_R": best, "rooms": len(rooms), "landmarks": last.get("nodes"),
+                      "fps": last.get("fps"), "best_route": last.get("best_route"), "reproducible_depth": last.get("reproducible_depth")},
+            "eval": ev}
+
+
 def load_config(run_dir: Path):
     p = run_dir / "config.json"
     return json.loads(p.read_text()) if p.exists() else {}
+
+
+def series(kind, d: Path, r):
+    if kind == "gowu":
+        return gowu_series(d) if (d / "log.jsonl").exists() else None
+    if kind == "gwrw":
+        return gwrw_series(d, r["prefix"]) if (d / f"{r['prefix']}_log.jsonl").exists() else None
+    return lr_series(d, [REPO / c for c in r.get("continued", [])]) if (d / "log.jsonl").exists() else None
 
 
 def git(*args):
@@ -300,6 +336,11 @@ def fmt(v, nd=0):
 def eval_cell(fam):
     if fam["kind"] == "gowu":
         return "<span class=muted>Phase II not run</span>"
+    if fam["kind"] == "gwrw":
+        evs = [e for r in fam["runs"] for e in (r.get("eval") or [])]
+        if not evs:
+            return "<span class=muted>test pending</span>"
+        return " / ".join(fmt(e["mean"]) for e in evs) + f"<div class=muted>max {fmt(max(e['max'] for e in evs))} · frozen, {evs[0]['n']} games</div>"
     caps = [e for r in fam["runs"] for e in (r.get("eval") or []) if e["cap_frames"]]
     if not caps:
         return "–"
@@ -314,14 +355,15 @@ def build(out: Path):
         runs = []
         for r in f["runs"]:
             d = REPO / r["dir"]
-            if not (d / "log.jsonl").exists():
+            s = series(kind, d, r)
+            if s is None:
                 continue
-            s = gowu_series(d) if kind == "gowu" else lr_series(d, [REPO / c for c in r.get("continued", [])])
-            s.update(seed=r["seed"], dir=str(d), config=load_config(d), continued=r.get("continued", []))
+            cfg = load_config(d) if kind != "gwrw" else json.loads((d / f"{r['prefix']}_live.json").read_text())
+            s.update(seed=r["seed"], dir=str(d), config=cfg, continued=r.get("continued", []))
             runs.append(s)
         fams.append({**f, "kind": kind, "color": f"--s{((f.get('slot') or k + 1) - 1) % 8 + 1}", "step": True, "runs": runs})
 
-    lr_max = max((r["rows"][-1][0] for f in fams if f["kind"] != "gowu" for r in f["runs"]), default=1e8)
+    lr_max = max((r["rows"][-1][0] for f in fams if f["kind"] == "lr" for r in f["runs"]), default=1e8)
     all_max = max(r["rows"][-1][0] for f in fams for r in f["runs"])
     data = {"families": [{k: f[k] for k in ("id", "label", "kind", "color", "step")} |
                          {"runs": [{"seed": r["seed"], "cols": r["cols"], "rows": r["rows"]} for r in f["runs"]]} for f in fams],
@@ -342,7 +384,7 @@ def build(out: Path):
                     f"<td class=n>{fmt((frames or 0) / 1e6)}M</td><td class=n>{fmt(best)}</td><td class=n>{fmt(rooms)}</td>"
                     f"<td class=n>{eval_cell(f)}</td><td>{E(f.get('verdict', ''))}</td><td>{arch}</td></tr>")
 
-    latest = next((f for f in reversed(fams) if f["kind"] != "gowu" and f["runs"]), None)
+    latest = next((f for f in reversed(fams) if f["kind"] == "lr" and f["runs"]), None)
     tiles = ""
     if latest:
         fin = [r["final"] for r in latest["runs"]]
@@ -356,6 +398,33 @@ def build(out: Path):
             ("Best reward in training", fmt(max(x["best_R"] for x in fin)), f"{max(x['rooms'] for x in fin)} rooms · {fmt(latest_frames / 1e6)}M frames"),
             ("GoWU Phase I at same frames", (f"{fmt(min(bR))}–{fmt(max(bR))}" if bR else "–"), f"best trajectory, restores states, {len(bR)} seeds"),
         ])
+
+    # ---- head-to-head at equal frames (best R and rooms; range over seeds; – = no seed got that far)
+    marks = [25e6, 50e6, 100e6, 250e6, 400e6]
+
+    def at(rows, x, c):
+        if not rows or rows[-1][0] < x * 0.98:
+            return None
+        v = None
+        for r in rows:
+            if r[0] > x:
+                break
+            v = r[c] if r[c] is not None else v
+        return v
+
+    def rng_cell(vals, rooms):
+        vals = [v for v in vals if v is not None]
+        if not vals:
+            return "<td class=n>–</td>"
+        rr = [v for v in rooms if v is not None]
+        top = fmt(min(vals)) if min(vals) == max(vals) else f"{fmt(min(vals))}–{fmt(max(vals))}"
+        return f"<td class=n>{top}<div class=muted>{max(rr) if rr else '–'} rooms</div></td>"
+    h2h = []
+    for f in fams:
+        if not f["runs"]:
+            continue
+        cells = "".join(rng_cell([at(r["rows"], x, 1) for r in f["runs"]], [at(r["rows"], x, 2) for r in f["runs"]]) for x in marks)
+        h2h.append(f"<tr><td><span class=sw style='background:var({f['color']})'></span>{E(f['label'])}</td>{cells}<td class=n>{eval_cell(f)}</td></tr>")
 
     locs = []
     for f in fams:
@@ -389,6 +458,15 @@ Baseline: our GoWU reproduction (Mhammedi &amp; Cohan 2026). Plan: <code>docs/PL
 <th>Eval mean (deployable)</th><th>Verdict</th><th>Architecture</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
 <p class=muted>Eval = π_R from <code>env.reset()</code>, sticky actions 0.25, 5 lives, 32 episodes, 30-min cap, one number per seed.
 GoWU's comparable number would be its Phase II (robustified) score, which we have not run (paper: 182.7k at 15–20B frames).</p>
+
+<h2>Head-to-head at equal frames</h2>
+<div class="card tw"><table><thead><tr><th>Run family</th>{''.join(f"<th>{fmt(x / 1e6)}M</th>" for x in marks)}<th>Test (deployable)</th></tr></thead>
+<tbody>{''.join(h2h)}</tbody></table></div>
+<p class=muted>Best game score reached in training by that frame count (range over seeds), with the most rooms. GoWU restores emulator
+states, so its number is a search result; LR-GoWU and GWRW play every game from reset. GWRW rooms are raw RAM room ids from its
+diagnostics (all levels together); LR-GoWU counts level-1 rooms. Tests are not equal: LR-GoWU = π_R alone, 32 episodes, 30-min cap;
+GWRW = frozen route controller to its deepest reproducible route, then its explorers, 192 games per run, its own game cap
+(4,000 steps per scene seen, 8,000 after hand-off).</p>
 
 <h2>Where the data is</h2>
 <div class="card tw"><table><tbody>
