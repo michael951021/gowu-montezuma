@@ -93,18 +93,30 @@ def montage(rooms):
 
 
 # ------------------------------------------------------------------ data
+def fix_transitions(P):
+    """P: (n, 3) room, x, y. On the frame of a room change the room byte is already new while x/y are still the old room's
+    (e.g. room 6 x=146 -> room 7 x=149 -> room 7 x=1), which would plot as a jump to the far edge. That frame takes the
+    next frame's x/y."""
+    P = P.copy()
+    ch = np.flatnonzero(P[1:-1, 0] != P[:-2, 0]) + 1
+    for i in ch:
+        if P[i + 1, 0] == P[i, 0]:
+            P[i, 1:] = P[i + 1, 1:]
+    return P
+
+
 def gwrw_data(run_dir: Path, prefix: str, late: float):
     """Visits (list of (room, x, y) arrays), deaths and ends (lists of (room, x, y)) of one GWRW run."""
     paths = []
     for f in sorted(glob.glob(str(run_dir / f"{prefix}_deep" / "*.npz"))) + sorted(glob.glob(str(run_dir / f"{prefix}_deep_rare" / "*.npz"))):
         try:
-            p = np.load(f)["pos"]; paths.append(np.stack([p[:, 2], p[:, 0], p[:, 1]], 1))
+            p = np.load(f)["pos"]; paths.append(fix_transitions(np.stack([p[:, 2], p[:, 0], p[:, 1]], 1)))
         except Exception:
             pass
     ev = run_dir / f"{prefix}_eval_eval_paths.pkl"
     if ev.exists():
         for p in pickle.load(ev.open("rb"))["paths"]:
-            paths.append(np.stack([p[:, 2], p[:, 0], p[:, 1]], 1))
+            paths.append(fix_transitions(np.stack([p[:, 2], p[:, 0], p[:, 1]], 1)))
     rows = [json.loads(l) for l in (run_dir / f"{prefix}_episodes.jsonl").open()]
     rows = rows[int(len(rows) * (1 - late)):]
     deaths = [(d[1], d[2], d[3]) for e in rows for d in e.get("diag_deaths", [])]
@@ -148,7 +160,8 @@ def pick_samples(run_dir: Path, prefix: str, k=2):
 
 def export_walk(f, out: Path, tag: str, stride=2, max_frames=1100, cols=40):
     d = np.load(f)
-    fr, pos = d["frames"][::stride][:max_frames], d["pos"][::stride][:max_frames]
+    P = fix_transitions(np.stack([d["pos"][:, 2], d["pos"][:, 0], d["pos"][:, 1]], 1))
+    fr, pos = d["frames"][::stride][:max_frames], np.stack([P[:, 1], P[:, 2], P[:, 0]], 1)[::stride][:max_frames]
     n = len(fr); rows = -(-n // cols)
     sheet = np.zeros((rows * 84, cols * 84), np.uint8)
     for i, im in enumerate(fr):
