@@ -436,7 +436,7 @@ def build(out: Path):
 <div class=sub>Learned-Return GoWU on Montezuma's Revenge: GoWU's search, but no emulator restores. A goal-conditioned
 policy has to walk back to every landmark, so the result is a deployable policy rather than a lucky trajectory.
 Baseline: our GoWU reproduction (Mhammedi &amp; Cohan 2026). Plan: <code>docs/PLAN_LR_GOWU.md</code>.
-<a href='/{out.name}/algorithm/'>Algorithm (LaTeX / PDF) →</a></div>
+<a href='/{out.name}/algorithm/'>Algorithm (LaTeX / PDF) →</a> · <a href='/montezuma-paths/'>Path map: where agents walk, die and stop →</a></div>
 <div class=tiles>{tiles}</div>
 
 <h2>Training curves</h2>

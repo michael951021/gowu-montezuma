@@ -1,0 +1,100 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Montezuma path map</title>
+<script>(s=>{s.src='http://'+location.hostname+':8765/hub.js';document.head.append(s)})(document.createElement('script'))</script>
+<style>
+:root{--bg:#f5f6f7;--surface:#fff;--fg:#1a1f24;--muted:#5f6871;--line:#dde2e6;--accent:#c4501b;--joe:#ff3d7f;--trail:#21c7d9}
+@media (prefers-color-scheme:dark){:root{--bg:#111417;--surface:#191e23;--fg:#e3e7eb;--muted:#9aa3ad;--line:#2b333b;--accent:#ff8a4c}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif;padding:0 max(16px,env(safe-area-inset-left))}
+main{max-width:1480px;margin:0 auto;padding:28px 0 60px;display:flex;flex-direction:column;gap:28px}
+h1{margin:0;font-size:30px;letter-spacing:-.01em}h2{margin:0 0 10px;font-size:20px}p{margin:0}
+.muted{color:var(--muted)}code{font:13px ui-monospace,monospace}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select{font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:5px;cursor:pointer}
+button[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.mapwrap{overflow-x:auto}.map{position:relative;width:1440px;height:652px;background:#000}
+.map img{position:absolute;inset:0;width:1440px;height:652px;image-rendering:pixelated}
+.map .lbl{position:absolute;font:600 11px ui-monospace,monospace;color:#fff;background:#000a;padding:1px 4px;border-radius:3px;pointer-events:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase}
+.walk{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start}@media (max-width:900px){.walk{grid-template-columns:1fr}}
+#frame{width:336px;height:336px;image-rendering:pixelated;background:#000;border-radius:4px}
+#wmap{width:100%;max-width:1440px;background:#000;border-radius:4px}
+#events{max-height:220px;overflow:auto;font-size:13px}#events div{padding:3px 6px;cursor:pointer;border-radius:3px}#events div:hover{background:var(--line)}#events .cur{background:var(--accent);color:#fff}
+input[type=range]{width:100%}
+.bars{display:flex;align-items:flex-end;gap:2px;height:90px}.bars div{flex:1;background:var(--accent);min-height:1px}
+</style></head><body><main>
+<header><h1>Montezuma path map</h1>
+<p class="muted">Level 1 as the emulator draws it, with where the agents walk, die and stop. Positions come from RAM bytes the algorithms log for diagnostics only (room = 3, x = 42, y = 43), mapped to pixels by a fit against Joe's sprite (px = x + 3, py = 325 − y). Rebuild: <code>.venv/bin/python scripts/path_viz.py</code> in gowu-montezuma.</p></header>
+
+<section class="card" id="why"><h2>Where it gets stuck</h2><div class="grid" id="whygrid"></div></section>
+
+<section class="card"><h2>Heat layers</h2>
+<div class="row" id="toggles" style="margin-bottom:10px"></div>
+<div class="mapwrap"><div class="map" id="map"><img src="map.png" alt="Level 1 of Montezuma's Revenge, all 24 rooms"></div></div>
+<p class="muted" style="margin-top:8px">Log colour scale per layer: dark purple = rare, yellow = very frequent. The bottom row is dark because Level-1 rooms are unlit without the torch.</p></section>
+
+<section class="card"><h2>Walk through a game</h2>
+<div class="row" style="margin-bottom:10px"><select id="pick"></select><button id="play">Play</button>
+<select id="speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option></select>
+<span id="info" class="muted"></span></div>
+<input type="range" id="slider" min="0" value="0">
+<div class="walk" style="margin-top:12px"><div><canvas id="frame" width="84" height="84"></canvas><p class="muted" id="meta" style="max-width:336px;font-size:13px;margin-top:6px"></p></div>
+<div style="min-width:0"><canvas id="wmap" width="1440" height="652"></canvas><div id="events"></div></div></div></section>
+</main>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const map = document.getElementById('map'), shown = new Set(['deaths']);
+// room labels
+D.layout.forEach((row, r) => row.forEach((room, c) => { if (room == null) return;
+  const l = document.createElement('div'); l.className = 'lbl'; l.textContent = room; l.style.left = (c * D.W + 4) + 'px'; l.style.top = (r * D.H + 4) + 'px'; map.appendChild(l); }));
+for (const L of D.layers) {
+  const im = document.createElement('img'); im.src = 'layer_' + L.id + '.png'; im.alt = L.label; im.hidden = !shown.has(L.id); map.insertBefore(im, map.querySelector('.lbl'));
+  const b = document.createElement('button'); b.textContent = L.label + ' (' + L.n.toLocaleString() + ')'; b.setAttribute('aria-pressed', shown.has(L.id));
+  b.onclick = () => { im.hidden = !im.hidden; b.setAttribute('aria-pressed', !im.hidden); };
+  document.getElementById('toggles').appendChild(b);
+}
+// why panel
+const wg = document.getElementById('whygrid');
+for (const [run, s] of Object.entries(D.stats)) {
+  const c = document.createElement('div');
+  const mx = Math.max(1, ...s.x7_hist);
+  c.innerHTML = `<h3 style="margin:0 0 6px">${run}</h3><p class="muted">${s.games.toLocaleString()} late games · ${s.deaths.toLocaleString()} lives lost</p>
+  <table><tr><th>Room</th><th>x</th><th>y</th><th>Lives lost</th></tr>${s.top_deaths.map(d => `<tr><td>${d[0]}</td><td>${d[1]}–${d[1]+15}</td><td>${d[2]}–${d[2]+15}</td><td>${d[3].toLocaleString()}</td></tr>`).join('')}</table>
+  <p style="margin-top:10px">Furthest x reached in room 7, per game (0 → 160): median <b>${s.x7_median}</b>, past x = 100: <b>${(100*s.x7_past100).toFixed(2)}%</b></p>
+  <div class="bars">${s.x7_hist.map(v => `<div title="${v} games" style="height:${Math.max(1, 100 * Math.log1p(v) / Math.log1p(mx))}%"></div>`).join('')}</div>`;
+  wg.appendChild(c);
+}
+{ const c = document.createElement('div');
+  c.innerHTML = `<h3 style="margin:0 0 6px">LR-GoWU (yours)</h3><p>${D.lr.landmarks} landmarks in rooms <b>${D.lr.rooms.join(', ')}</b>. Furthest landmark in room 7: x ≈ <b>${D.lr.room7_max_x}</b>.</p>
+  <p class="muted" style="margin-top:8px">Same six rooms as GWRW. Room 7's left part is guarded by laser gates that switch on and off; crossing needs waiting for the gap, which a random held-action explorer rarely does.</p>`;
+  wg.appendChild(c); }
+// walkthrough
+const pick = document.getElementById('pick'), slider = document.getElementById('slider'), fc = document.getElementById('frame').getContext('2d'),
+      wm = document.getElementById('wmap').getContext('2d'), mapImg = new Image(); mapImg.src = 'map.png';
+let W = null, sheet = new Image(), t = 0, playing = false, timer = null;
+D.walks.forEach((w, k) => { const o = document.createElement('option'); o.value = k; o.textContent = `${w.tag.replace(/_\d$/, '')} · ${w.file}`; pick.appendChild(o); });
+function load(k) { W = D.walks[k]; sheet = new Image(); sheet.onload = () => draw(); sheet.src = 'walk_' + W.tag + '.png'; slider.max = W.n - 1; t = 0; slider.value = 0;
+  document.getElementById('meta').textContent = `Target: ${W.target || '—'} · Landmarks hit: ${W.seq || '—'}` + (W.score != null ? ` · Score ${W.score}` : '') + ` · every ${W.stride}nd step shown`;
+  const ev = document.getElementById('events'); ev.innerHTML = '';
+  for (const e of W.events) { const d = document.createElement('div'); d.textContent = `step ${(e.i * W.stride).toLocaleString()}: ${e.text}`; d.onclick = () => { t = e.i; draw(); }; d.dataset.i = e.i; ev.appendChild(d); } }
+function draw() {
+  if (!W) return; slider.value = t;
+  const col = t % W.cols, row = Math.floor(t / W.cols);
+  fc.imageSmoothingEnabled = false; fc.drawImage(sheet, col * 84, row * 84, 84, 84, 0, 0, 84, 84);
+  wm.drawImage(mapImg, 0, 0); wm.lineWidth = 2; wm.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--trail'); wm.beginPath();
+  let started = false, prevRoom = null;
+  for (let i = 0; i <= t; i++) { const p = W.map[i]; if (!p || p[0] == null) continue;
+    if (!started || W.rooms[i] !== prevRoom) { wm.moveTo(p[0], p[1]); started = true; } else wm.lineTo(p[0], p[1]); prevRoom = W.rooms[i]; }
+  wm.stroke();
+  const p = W.map[t]; if (p && p[0] != null) { wm.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--joe'); wm.beginPath(); wm.arc(p[0], p[1] - 8, 7, 0, 7); wm.fill(); }
+  document.getElementById('info').textContent = `step ${(t * W.stride).toLocaleString()} of ${(W.n * W.stride).toLocaleString()} · room ${W.rooms[t]}`;
+  for (const d of document.querySelectorAll('#events div')) d.classList.toggle('cur', +d.dataset.i <= t && !([...document.querySelectorAll('#events div')].find(x => +x.dataset.i > +d.dataset.i && +x.dataset.i <= t)));
+}
+slider.oninput = () => { t = +slider.value; draw(); };
+pick.onchange = () => load(+pick.value);
+document.getElementById('play').onclick = e => { playing = !playing; e.target.textContent = playing ? 'Pause' : 'Play';
+  clearInterval(timer); if (playing) timer = setInterval(() => { t = Math.min(W.n - 1, t + +document.getElementById('speed').value); draw(); if (t >= W.n - 1) document.getElementById('play').click(); }, 1000 / 30); };
+mapImg.onload = () => { if (D.walks.length) load(0); };
+</script></body></html>
