@@ -63,12 +63,20 @@ for (const [run, s] of Object.entries(D.stats)) {
   c.innerHTML = `<h3 style="margin:0 0 6px">${run}</h3><p class="muted">${s.games.toLocaleString()} late games · ${s.deaths.toLocaleString()} lives lost</p>
   <table><tr><th>Room</th><th>x</th><th>y</th><th>Lives lost</th></tr>${s.top_deaths.map(d => `<tr><td>${d[0]}</td><td>${d[1]}–${d[1]+15}</td><td>${d[2]}–${d[2]+15}</td><td>${d[3].toLocaleString()}</td></tr>`).join('')}</table>
   <p style="margin-top:10px">Furthest x reached in room 7, per game (0 → 160): median <b>${s.x7_median}</b>, past x = 100: <b>${(100*s.x7_past100).toFixed(2)}%</b></p>
-  <div class="bars">${s.x7_hist.map(v => `<div title="${v} games" style="height:${Math.max(1, 100 * Math.log1p(v) / Math.log1p(mx))}%"></div>`).join('')}</div>`;
+  <div class="bars">${s.x7_hist.map(v => `<div title="${v} games" style="height:${Math.max(1, 100 * Math.log1p(v) / Math.log1p(mx))}%"></div>`).join('')}</div>
+  <p style="margin-top:10px">Explorer hand-offs by room: ${s.diag.handoff_rooms.map(h => `${h[0]}: <b>${Math.round(100 * h[1])}%</b>`).join(' · ')}.
+  When the hand-off is in room 7 (${s.diag.h7_games.toLocaleString()} games), the first life is lost after a median <b>${s.diag.h7_first_death}</b> steps, and <b>${s.diag.h7_deaths7.toFixed(1)}</b> lives are lost there per game.</p>`;
   wg.appendChild(c);
 }
 { const c = document.createElement('div');
   c.innerHTML = `<h3 style="margin:0 0 6px">LR-GoWU (yours)</h3><p>${D.lr.landmarks} landmarks in rooms <b>${D.lr.rooms.join(', ')}</b>. Furthest landmark in room 7: x ≈ <b>${D.lr.room7_max_x}</b>.</p>
   <p class="muted" style="margin-top:8px">Same six rooms as GWRW. Room 7's left part is guarded by laser gates that switch on and off; crossing needs waiting for the gap, which a random held-action explorer rarely does.</p>`;
+  wg.appendChild(c); }
+for (const [run, g] of Object.entries(D.gowu || {})) {
+  const c = document.createElement('div');
+  c.innerHTML = `<h3 style="margin:0 0 6px">GoWU Phase I · ${run}</h3><p>Best route clears Level 1: all <b>${g.rooms.length}</b> rooms, score <b>${g.R.toLocaleString()}</b> when it leaves for Level 2, ${g.steps.toLocaleString()} steps.</p>
+  <p style="margin-top:6px">Enters room 7 at step <b>${g.r7_in.toLocaleString()}</b>, first climbs from room 7 down to room 13 (past the first laser gate) at step <b>${g.r7_cross == null ? '—' : g.r7_cross.toLocaleString()}</b>.</p>
+  <p class="muted" style="margin-top:8px">Restores emulator snapshots: a branch that hits the laser is dropped and a sibling that waited survives, so the route is a search result, not a policy.</p>`;
   wg.appendChild(c); }
 // walkthrough
 const pick = document.getElementById('pick'), slider = document.getElementById('slider'), fc = document.getElementById('frame').getContext('2d'),
@@ -76,9 +84,9 @@ const pick = document.getElementById('pick'), slider = document.getElementById('
 let W = null, sheet = new Image(), t = 0, playing = false, timer = null;
 D.walks.forEach((w, k) => { const o = document.createElement('option'); o.value = k; o.textContent = `${w.tag.replace(/_\d$/, '')} · ${w.file}`; pick.appendChild(o); });
 function load(k) { W = D.walks[k]; sheet = new Image(); sheet.onload = () => draw(); sheet.src = 'walk_' + W.tag + '.png'; slider.max = W.n - 1; t = 0; slider.value = 0;
-  document.getElementById('meta').textContent = `Target: ${W.target || '—'} · Landmarks hit: ${W.seq || '—'}` + (W.score != null ? ` · Score ${W.score}` : '') + ` · every ${W.stride}nd step shown`;
+  document.getElementById('meta').textContent = `Target: ${W.target || '—'} · Landmarks hit: ${W.seq || '—'}` + (W.score != null ? ` · Score ${W.score}` : '') + (W.stride > 1 ? ` · every ${W.stride}th step shown` : ' · every step shown');
   const ev = document.getElementById('events'); ev.innerHTML = '';
-  for (const e of W.events) { const d = document.createElement('div'); d.textContent = `step ${(e.i * W.stride).toLocaleString()}: ${e.text}`; d.onclick = () => { t = e.i; draw(); }; d.dataset.i = e.i; ev.appendChild(d); } }
+  for (const e of W.events) { const d = document.createElement('div'); d.textContent = `step ${((W.step0 || 0) + e.i * W.stride).toLocaleString()}: ${e.text}`; d.onclick = () => { t = e.i; draw(); }; d.dataset.i = e.i; ev.appendChild(d); } }
 function draw() {
   if (!W) return; slider.value = t;
   const col = t % W.cols, row = Math.floor(t / W.cols);
@@ -89,7 +97,7 @@ function draw() {
     if (!started || W.rooms[i] !== prevRoom) { wm.moveTo(p[0], p[1]); started = true; } else wm.lineTo(p[0], p[1]); prevRoom = W.rooms[i]; }
   wm.stroke();
   const p = W.map[t]; if (p && p[0] != null) { wm.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--joe'); wm.beginPath(); wm.arc(p[0], p[1] - 8, 7, 0, 7); wm.fill(); }
-  document.getElementById('info').textContent = `step ${(t * W.stride).toLocaleString()} of ${(W.n * W.stride).toLocaleString()} · room ${W.rooms[t]}`;
+  document.getElementById('info').textContent = `step ${((W.step0 || 0) + t * W.stride).toLocaleString()} of ${((W.step0 || 0) + W.n * W.stride).toLocaleString()} · room ${W.rooms[t]}`;
   for (const d of document.querySelectorAll('#events div')) d.classList.toggle('cur', +d.dataset.i <= t && !([...document.querySelectorAll('#events div')].find(x => +x.dataset.i > +d.dataset.i && +x.dataset.i <= t)));
 }
 slider.oninput = () => { t = +slider.value; draw(); };
