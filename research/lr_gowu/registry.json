@@ -59,7 +59,7 @@
    "arch": "gwrw",
    "slot": 6,
    "about": "montezuma_gwrw package (gwrw_cd_v1 code, unchanged), fresh start without its CKPT14 / pool seed, shipped live json, 96 games per run, two replicates to 400M frames. Pixels + reward only, no restores, sticky actions.",
-   "verdict": "Running (started 2026-11-03 13:22). Test (frozen, 192 games per run) queued after training.",
+   "verdict": "Same plateau as LR v2: 2,500 and the same 6 rooms (0,1,2,5,6,7) by ~25M frames, flat to 400M (run a found one more reward at ~390M: best 2,600). Frozen test, 192 games per run: mean 2,281 / 2,228, median 2,500, 89% of games score 2,500, the rest 500 (died on the route). Stuck at room 7's laser gates: ~33k lives lost per run right at its entrance (x 0-20); median room-7 x reached 11, past x=100 in 0.1% of games. The learned explorers stay at 99.4% of uniform entropy (shipped entropy_coef 1.0, tuned for the seeded research run). This is a fresh start: the research run began from run14's trained novelty models and an 800-game seed pool, which are not in the package.",
    "runs": [
     {
      "seed": "a",
