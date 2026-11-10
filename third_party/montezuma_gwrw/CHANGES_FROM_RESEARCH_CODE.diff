@@ -1,0 +1,94 @@
+--- gwrw/train_gwrw_comp_cd.py	2026-10-23 12:45:08.015090992 -0400
++++ packaged/gwrw/train_gwrw_comp_cd.py	2026-10-30 11:19:31.986110709 -0400
+@@ -40,7 +40,7 @@
+ OUT = os.path.join(HERE, "out")
+ RUN = os.environ.get("RUN_NAME", "gwrw_comp_v1")
+ DEVICE = os.environ.get("DEVICE", "cuda:0")
+-CKPT14 = os.environ.get("CKPT14", os.path.join(ROOT, "checkpoints", "desktop_v2_run14_ac_resume_final_iter19051_pre_gwrw.pt"))
++CKPT14 = os.environ.get("CKPT14", os.path.join(ROOT, "checkpoints", "desktop_v2_run14_ac_resume_final_iter19051_pre_gwrw.pt"))   # optional in this package: absent = fresh RND / PopArt / advantage scales
+ E = lambda k, d: type(d)(os.environ.get(k, d))
+ import train_gwrw as G
+ G.RUN = RUN
+@@ -111,7 +111,7 @@
+ ADV_RMS_COUNT_CAP = E("ADV_RMS_COUNT_CAP", 100000.0)  # run14's advantage-scale history (54M samples) is capped so it can adapt; the task stream (scale ~1000x off) starts fresh
+ RESET_TASK_CRITIC = E("RESET_TASK_CRITIC", 1)  # 1: zero the task critics' output layers + PopArt (inherited values are ~100x too large for takeover novelty)
+ TRAIN_TRUNK = E("TRAIN_TRUNK", 0)             # 0: conv + trunk frozen (as in run14); actors, critics, GRU train
+-EXPLORER_ARCH = os.environ.get("EXPLORER_ARCH", "run14")   # "run14": run14's 29M net (GRU); "mu": the route controller's architecture, trunk shared by the agents and warm-started from mu, no GRU
++EXPLORER_ARCH = os.environ.get("EXPLORER_ARCH", "trav")   # "run14": run14's 29M net (GRU); "mu": the route controller's architecture, trunk shared by the agents and warm-started from mu, no GRU
+ if EXPLORER_ARCH in ("mu", "trav") and "TRAIN_TRUNK" not in os.environ:
+     TRAIN_TRUNK = 1
+ TRUNK_LR_MULT = E("TRUNK_LR_MULT", 0.1)       # explorer trunk learning rate = takeover_lr * this (mu arch)
+@@ -541,23 +541,24 @@
+         from algorithms.rnd import RNDModel, RunningMeanStd
+         self.p, self.net = p, net
+         self.rnd = RNDModel(device=DEVICE, predictor_arch="paper")
+-        self.rnd.predictor.load_state_dict(ck[f"{p}_rnd_predictor"]); self.rnd.target.load_state_dict(ck[f"{p}_rnd_target"])
+-        rms_from(self.rnd.obs_rms, ck[f"{p}_rnd_obs_rms"])
+-        self.ret_rms = RunningMeanStd(shape=()); rms_from(self.ret_rms, ck[f"{p}_rnd_return_rms"])
+-        self.popart = {s: (dict(ck[f"{p}_popart"][s]) if s in ck[f"{p}_popart"] else dict(mu=0.0, nu=1.0, inited=False)) for s in STREAMS}; self._popart0 = {s: dict(v) for s, v in self.popart.items()}
++        self.ret_rms = RunningMeanStd(shape=())
++        if ck is not None:
++            self.rnd.predictor.load_state_dict(ck[f"{p}_rnd_predictor"]); self.rnd.target.load_state_dict(ck[f"{p}_rnd_target"])
++            rms_from(self.rnd.obs_rms, ck[f"{p}_rnd_obs_rms"]); rms_from(self.ret_rms, ck[f"{p}_rnd_return_rms"])
++        self.popart = {s: (dict(ck[f"{p}_popart"][s]) if ck is not None and s in ck[f"{p}_popart"] else dict(mu=0.0, nu=1.0, inited=False)) for s in STREAMS}; self._popart0 = {s: dict(v) for s, v in self.popart.items()}
+         if RESET_TASK_CRITIC:
+             import torch as _t
+             with _t.no_grad():
+                 last = net.critic_heads[f"task_{p}"][-1]; last.weight.zero_(); last.bias.zero_()
+             self.popart["task"] = dict(mu=0.0, nu=1.0, inited=False)
+         self.adv_rms = {s: RunningMeanStd(shape=()) for s in STREAMS}
+-        for s_ in ("extrinsic", "progress"):
++        for s_ in (("extrinsic", "progress") if ck is not None else ()):
+             rms_from(self.adv_rms[s_], ck[f"{p}_adv_rms"][s_]); self.adv_rms[s_].count = min(self.adv_rms[s_].count, ADV_RMS_COUNT_CAP)
+-        if not RESET_TASK_CRITIC:
++        if not RESET_TASK_CRITIC and ck is not None:
+             rms_from(self.adv_rms["task"], ck[f"{p}_adv_rms"]["task"]); self.adv_rms["task"].count = min(self.adv_rms["task"].count, ADV_RMS_COUNT_CAP)
+         import torch
+         self.rnd_opt = torch.optim.Adam(self.rnd.predictor.parameters(), lr=1e-4)
+-        if f"{p}_rnd_opt" in ck:
++        if ck is not None and f"{p}_rnd_opt" in ck:
+             try: self.rnd_opt.load_state_dict(ck[f"{p}_rnd_opt"])
+             except Exception: pass
+         self.filt = np.zeros(N)
+@@ -587,7 +588,11 @@
+     log = lambda s: print(time.strftime("%H:%M:%S"), s, flush=True)
+     vec = None
+     mu = build_mu().to(dev); trav = build_mu(heads=(EXPLORER_ARCH == "trav")).to(dev)
+-    ck14 = torch.load(CKPT14, mmap=True, weights_only=False, map_location="cpu")
++    os.makedirs(OUT, exist_ok=True)
++    ck14 = torch.load(CKPT14, mmap=True, weights_only=False, map_location="cpu") if os.path.exists(CKPT14) else None
++    log(f"run14 checkpoint {'loaded: ' + CKPT14 if ck14 is not None else 'not found -> fresh RND models, PopArt and advantage scales for agents a/b/c'}")
++    if ck14 is None and EXPLORER_ARCH != "trav":
++        raise SystemExit(f"EXPLORER_ARCH={EXPLORER_ARCH} needs the run14 checkpoint (CKPT14={CKPT14}); use EXPLORER_ARCH=trav for a fresh start")
+     if EXPLORER_ARCH == "trav":
+         net = trav
+     elif EXPLORER_ARCH == "mu":
+@@ -744,9 +749,13 @@
+         if os.path.exists(P("_bdemos.pkl")):
+             bdemos = pickle.load(open(P("_bdemos.pkl"), "rb"))
+         log(f"resumed at update {st['update']}, frames {st['frames']}, nodes {len(st['archive'])}, scenes {len(st['sigs'])}, demo nodes {len(demos)}, go-back keys {len(bdemos)} ({sum(len(v) for v in bdemos.values())} legs)")
+-    elif SEED_FROM_POOL:
+-        st["archive"], demos, st["sigs"] = seed_from_pool(log)
+-        trav.load_state_dict(mu.state_dict())
++    else:
++        if SEED_FROM_POOL and os.path.exists(os.path.join(POOL_DIR, "pool800_files.json")):
++            st["archive"], demos, st["sigs"] = seed_from_pool(log)
++        else:
++            log("fresh start: empty archive, no demos, no scene codebook (everything is discovered from the first game on)")
++        miss_ = trav.load_state_dict(mu.state_dict(), strict=False)     # trav = mu's trunk + the explorer's actor/critic heads (those stay at their own init)
++        assert not miss_.unexpected_keys and all(k_.startswith(("actor_", "critic_")) for k_ in miss_.missing_keys), (miss_.missing_keys[:4], miss_.unexpected_keys[:4])
+     t_le = time.time(); n_old = sum(1 for v in demos.values() for d in v if len(d) == 3)
+     demos = {n_: [d if len(d) == 4 else mkdemo(*d) for d in v] for n_, v in demos.items()}
+     log(f"loop erasure (le_thr {hp['le_thr']}): {n_old} demos newly processed in {time.time() - t_le:.0f}s; all demos steps {sum(len(d[2]) for v in demos.values() for d in v)} -> kept {sum(len(d[3]) for v in demos.values() for d in v)}")
+--- gwrw/train_route.py	2026-10-05 15:08:33.618351853 -0400
++++ packaged/gwrw/train_route.py	2026-10-30 11:19:31.984404428 -0400
+@@ -37,7 +37,8 @@
+ def make_env(seed):
+     import ale_py, gymnasium as gym
+     from env.wrappers import FrameStack, MaxAndSkipEnv, NoopResetEnv, WarpFrame
+-    os.environ.setdefault("ALE_ROMS_PATH", "/home/karthik-sridharan/montezuma_coevo/roms")
++    if os.path.isdir(os.environ.get("ALE_ROMS_DIR", "")):
++        os.environ.setdefault("ALE_ROMS_PATH", os.environ["ALE_ROMS_DIR"])    # only needed for a ROM directory outside ale-py; ale-py 0.12 bundles Montezuma
+     gym.register_envs(ale_py)
+     env = gym.make("ALE/MontezumaRevenge-v5", frameskip=1)      # same settings as the saved routes (sticky 0.25, noop starts)
+     env = FrameStack(WarpFrame(MaxAndSkipEnv(NoopResetEnv(env, noop_max=30), skip=4)), k=4)

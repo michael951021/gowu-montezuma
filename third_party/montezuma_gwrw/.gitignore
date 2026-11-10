@@ -1,0 +1,6 @@
+gwrw/out/
+__pycache__/
+*.pt
+*.pkl
+*.npz
+out

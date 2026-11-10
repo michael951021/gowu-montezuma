@@ -1,7 +1,7 @@
 # GWRW (go-with-the-winner route walker), `gwrw_cd_v1` code package, fresh start
 
 Frozen snapshot. Not our code: the `montezuma_gwrw` package (gwrw_cd_v1 research run), unpacked into
-`third_party/montezuma_gwrw/` (gitignored, since this repo is public). The algorithm is unchanged. The only addition is an
+`third_party/montezuma_gwrw/` (tracked in this repo). The algorithm is unchanged. The only addition is an
 opt-in `EVAL_GAMES` mode in `gwrw/train_gwrw_comp_cd.py` for the frozen test; with it unset, training is the package's code.
 
 ## What it learns from

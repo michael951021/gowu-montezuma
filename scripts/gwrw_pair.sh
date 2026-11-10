@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two fresh GWRW runs (third_party/montezuma_gwrw, the gwrw_cd_v1 code package, gitignored), one per GPU, each to
+# Two fresh GWRW runs (third_party/montezuma_gwrw, the gwrw_cd_v1 code package), one per GPU, each to
 # FRAMES emulator frames. Re-running the same command resumes both from their last checkpoint.
 # usage: scripts/gwrw_pair.sh OUT FRAMES [PATCH_A] [PATCH_B]
 # PATCH_A / PATCH_B: optional JSON objects merged into run a's / run b's copy of the shipped live json on first

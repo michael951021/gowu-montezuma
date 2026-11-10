@@ -1,0 +1,7 @@
+# Versions the run was developed and tested with (Python 3.12).
+# Install torch first, matching your CUDA (>= 2.1 needed for torch.load(mmap=True)); tested with 2.2.0+cu118:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+ale-py==0.12.0                 # bundles the Atari ROMs; no separate ROM download
+gymnasium==1.3.0
+numpy==1.26.4
+opencv-python-headless==4.9.0.80
