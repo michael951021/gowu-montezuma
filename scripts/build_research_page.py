@@ -97,14 +97,21 @@ def gwrw_series(run_dir: Path, prefix: str):
     recs = read_log(run_dir / f"{prefix}_log.jsonl")
     by_upd = {}
     for e in read_log(run_dir / f"{prefix}_episodes.jsonl"):
-        b = by_upd.setdefault(e["update"], [0.0, set()])
+        b = by_upd.setdefault(e["update"], [0.0, set(), 0, 0])
         b[0] = max(b[0], e["score"]); b[1].update(e.get("diag_rooms", []))
+        if e.get("target"):   # a game with a route to walk: did μ arrive (all its landmarks, or the frontier clip)?
+            b[2] += 1; b[3] += bool(e.get("arrived"))
     best, rooms, upds, rows = 0.0, set(), sorted(by_upd), []
-    j = 0
-    for r in recs:
+    j, win, share_sum = 0, [], 0.0
+    for n, r in enumerate(recs, 1):
         while j < len(upds) and upds[j] <= r["update"]:
-            best = max(best, by_upd[upds[j]][0]); rooms |= by_upd[upds[j]][1]; j += 1
-        rows.append([r["frames"], best, len(rooms), r.get("nodes"), None, None, r.get("mean_score")])
+            u = by_upd[upds[j]]
+            best = max(best, u[0]); rooms |= u[1]; win.append((u[3], u[2])); j += 1
+        win = [w for w in win[-400:]]   # ~400 updates = ~20M frames of finished games
+        tries = sum(t for _, t in win)
+        succ = round(sum(a for a, _ in win) / tries, 3) if tries >= 20 else None
+        share_sum += r.get("route_share") or 0.0   # share of this update's frames spent walking the route (μ)
+        rows.append([r["frames"], best, len(rooms), r.get("nodes"), succ, round(share_sum / n, 3), r.get("mean_score")])
     last = recs[-1] if recs else {}
     ev = None
     if (run_dir / f"{prefix}_eval_eval.json").exists():
@@ -116,6 +123,55 @@ def gwrw_series(run_dir: Path, prefix: str):
             "final": {"frames": last.get("frames"), "best_R": best, "rooms": len(rooms), "landmarks": last.get("nodes"),
                       "fps": last.get("fps"), "best_route": last.get("best_route"), "reproducible_depth": last.get("reproducible_depth")},
             "eval": ev}
+
+
+def reach_lr(run_dir: Path):
+    """Every LR landmark the return policy was ever sent to: [depth, arrivals / tries, arrivals, tries, label]."""
+    p = run_dir / "landmarks.json"
+    if not p.exists():
+        return None
+    pts = []
+    for l in json.loads(p.read_text()):
+        if l["n_targeted"]:
+            k = l["key"]   # (level, room), (level, room, x//16, y//16) or (level, room, keys, x//16, y//16)
+            where = f"L{k[0] + 1} room {k[1]}"
+            if len(k) >= 4:
+                cx, cy = k[-2:]
+                where += f" · x {cx * 16}–{cx * 16 + 15}, y {cy * 16}–{cy * 16 + 15}" + (f" · {k[2]} key" if len(k) == 5 and k[2] else "")
+            pts.append([l["depth"], round(l["n_reached"] / l["n_targeted"], 4), l["n_reached"], l["n_targeted"],
+                        where + f" · R {l['R']:,.0f}"])
+    return pts
+
+
+def reach_gwrw(run_dir: Path, prefix: str):
+    """Every GWRW archive node μ was sent to (logged finished games): [depth, arrivals / tries, arrivals, tries, label].
+    Frontier-clip targets are pooled into one extra entry per depth, labelled as such."""
+    p = run_dir / f"{prefix}_episodes.jsonl"
+    if not p.exists():
+        return None
+    lmroom = {}
+    if (run_dir / f"{prefix}_lmroom.json").exists():
+        for k, v in json.loads((run_dir / f"{prefix}_lmroom.json").read_text()).items():
+            lm, room = k.split("@")
+            if v > lmroom.get(lm, (None, -1))[1]:
+                lmroom[lm] = (room, v)
+    C = {}
+    for e in read_log(p):
+        t = e.get("target")
+        if not t:
+            continue
+        key = ("front", len(t)) if t[-1][0] == "f" else tuple(f"{a}{b}" for a, b, *_ in t)
+        c = C.setdefault(key, [0, 0]); c[0] += 1; c[1] += bool(e.get("arrived"))
+    pts = []
+    for key, (n, a) in C.items():
+        if key[0] == "front":
+            pts.append([key[1], round(a / n, 4), a, n, f"frontier clips at depth {key[1]} (pooled)"])
+        else:
+            last = key[-1]
+            room = lmroom.get(last, ("?",))[0]
+            kind = "reward" if last[0] == "r" else "screen"
+            pts.append([len(key), round(a / n, 4), a, n, f"route ending in {kind} {last[1:]} (room {room}) · " + " ".join(key)])
+    return pts
 
 
 def load_config(run_dir: Path):
@@ -318,6 +374,44 @@ chart(document.getElementById('c-best'), {col: 'best_R', logY: true, yFmt: fmtN,
 chart(document.getElementById('c-rooms'), {col: 'rooms', yFmt: v => v == null ? '–' : String(Math.round(v))});
 chart(document.getElementById('c-ret'), {col: 'ret_success', lrOnly: true, yFmt: pct});
 chart(document.getElementById('c-share'), {col: 'return_share', lrOnly: true, yFmt: pct});
+
+function reachChart(fam){
+  const card = document.createElement('div'); card.className = 'card';
+  const all = fam.runs.flatMap(r => r.pts);
+  const md = Math.max(...all.map(p => p[0])), deep = all.filter(p => p[0] >= md - 2);
+  const zero = all.filter(p => p[2] === 0).length, ok = all.filter(p => p[1] >= 0.5);
+  const okd = ok.length ? Math.max(...ok.map(p => p[0])) : 0;
+  card.innerHTML = `<h3 style=margin-top:0><span class=sw style="background:var(${fam.color})"></span>${fam.label}</h3>
+    <div class=muted>Deepest landmark reached in ≥50% of tries: depth ${okd} of ${md}. Never reached once: ${zero} of ${all.length}.
+    Deepest three depths: ${deep.reduce((a, p) => a + p[2], 0).toLocaleString()} arrivals in ${deep.reduce((a, p) => a + p[3], 0).toLocaleString()} tries.</div>`;
+  const el = document.createElement('div'); el.className = 'chart'; card.appendChild(el);
+  document.getElementById('reach-grid').appendChild(card);
+  const W = 560, H = 260, m = {l: 44, r: 14, t: 10, b: 34}, ns = 'http://www.w3.org/2000/svg';
+  const tip = document.createElement('div'); tip.className = 'tip'; el.appendChild(tip);
+  const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); el.appendChild(svg);
+  const X = d => m.l + (d / (md + 1)) * (W - m.l - m.r), Y = v => m.t + (1 - v) * (H - m.t - m.b);
+  const add = (tag, at) => { const e = document.createElementNS(ns, tag); for (const k in at) e.setAttribute(k, at[k]); svg.appendChild(e); return e; };
+  function draw(){
+    svg.innerHTML = '';
+    for (const v of [0, .25, .5, .75, 1]) { add('line', {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: css('--grid')});
+      add('text', {x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', class: 'ax', fill: css('--muted'), 'font-size': 11}).textContent = Math.round(v * 100) + '%'; }
+    const st = niceStep(md / 6);
+    for (let d = 0; d <= md; d += st) add('text', {x: X(d), y: H - m.b + 16, 'text-anchor': 'middle', fill: css('--muted'), 'font-size': 11}).textContent = d;
+    add('text', {x: (W + m.l) / 2, y: H - 4, 'text-anchor': 'middle', fill: css('--muted'), 'font-size': 11}).textContent = 'landmark depth (→ newer, further from the start)';
+    const col = css(fam.color), bg = css('--surface');
+    fam.runs.forEach((r, si) => r.pts.forEach(p => {
+      const jit = (si ? 0.18 : -0.18) * (W - m.l - m.r) / (md + 1);
+      const c = add('circle', {cx: X(p[0]) + jit, cy: Y(p[1]), r: 4.5, fill: si ? bg : col, stroke: si ? col : bg, 'stroke-width': 2});
+      c.style.cursor = 'default';
+      c.addEventListener('mousemove', ev => { const b = el.getBoundingClientRect();
+        tip.innerHTML = `seed ${r.seed} · depth ${p[0]}<br>${p[4]}<br><b>${(p[1] * 100).toFixed(1)}%</b> · ${p[2].toLocaleString()} of ${p[3].toLocaleString()} tries`;
+        tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - b.left + 12, b.width - 260) + 'px'; tip.style.top = (ev.clientY - b.top - 60) + 'px'; });
+      c.addEventListener('mouseleave', () => tip.style.display = 'none');
+    }));
+  }
+  draw(); charts.push(draw);
+}
+D.reach.forEach(reachChart);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redraw);
 """
 
@@ -360,6 +454,9 @@ def build(out: Path):
                 continue
             cfg = load_config(d) if kind != "gwrw" else json.loads((d / f"{r['prefix']}_live.json").read_text())
             s.update(seed=r["seed"], dir=str(d), config=cfg, continued=r.get("continued", []))
+            if kind != "gowu":
+                last = REPO / r["continued"][-1] if r.get("continued") else d
+                s["reach"] = reach_gwrw(d, r["prefix"]) if kind == "gwrw" else reach_lr(last)
             runs.append(s)
         fams.append({**f, "kind": kind, "color": f"--s{((f.get('slot') or k + 1) - 1) % 8 + 1}", "step": True, "runs": runs})
 
@@ -367,7 +464,10 @@ def build(out: Path):
     all_max = max(r["rows"][-1][0] for f in fams for r in f["runs"])
     data = {"families": [{k: f[k] for k in ("id", "label", "kind", "color", "step")} |
                          {"runs": [{"seed": r["seed"], "cols": r["cols"], "rows": r["rows"]} for r in f["runs"]]} for f in fams],
-            "paper": reg["paper"], "lrMaxFrames": lr_max, "allMaxFrames": all_max}
+            "paper": reg["paper"], "lrMaxFrames": lr_max, "allMaxFrames": all_max,
+            "reach": [{"id": f["id"], "label": f["label"], "kind": f["kind"], "color": f["color"],
+                       "runs": [{"seed": r["seed"], "pts": r["reach"]} for r in f["runs"] if r.get("reach")]}
+                      for f in fams if f["kind"] != "gowu" and any(r.get("reach") for r in f["runs"])]}
 
     # ---- iteration table
     rows = []
@@ -447,11 +547,16 @@ Baseline: our GoWU reproduction (Mhammedi &amp; Cohan 2026). Plan: <code>docs/PL
 <div class=card><h3 style=margin-top:0>Best reward found during training <span class=muted>(log scale)</span></h3>
 <div class=muted>GoWU: best restored trajectory. LR-GoWU: best reward any episode reached from reset.</div><div class=chart id=c-best></div></div>
 <div class=card><h3 style=margin-top:0>Rooms discovered</h3><div class=muted>Level-1 rooms visited by any particle / episode.</div><div class=chart id=c-rooms></div></div>
-<div class=card><h3 style=margin-top:0>Return success <span class=muted>(LR only)</span></h3>
-<div class=muted>Share of trips back to the goal landmark that arrive, rolling over ~20 log steps.</div><div class=chart id=c-ret></div></div>
-<div class=card><h3 style=margin-top:0>Frames spent returning <span class=muted>(LR only)</span></h3>
-<div class=muted>Cumulative share of frames in the return phase; the rest is exploration.</div><div class=chart id=c-share></div></div>
+<div class=card><h3 style=margin-top:0>Return success <span class=muted>(LR-GoWU and GWRW)</span></h3>
+<div class=muted>Share of trips back to the target that arrive. LR: rolling over ~20 log steps. GWRW: μ's arrivals over the last ~20M frames of finished games.
+This is an average over every target, and most targets are easy, so it hides the frontier: see <a href='#reach'>arrival rate per landmark</a> below.</div><div class=chart id=c-ret></div></div>
+<div class=card><h3 style=margin-top:0>Frames spent returning <span class=muted>(LR-GoWU and GWRW)</span></h3>
+<div class=muted>Cumulative share of frames in the return phase (LR: π_R; GWRW: the route walker μ); the rest is exploration.</div><div class=chart id=c-share></div></div>
 </div>
+
+<h2 id=reach>Arrival rate at each landmark</h2>
+<p class=muted style=max-width:80ch>Every landmark the return policy was sent to over the whole run, by how deep it is (LR: landmarks in the lineage tree from the start; GWRW: landmarks on the route). Height = arrivals ÷ attempts. Filled dot = first seed, ring = second seed. The dots on the right are the newest places; the dots on the floor were never reached. Hover a dot for the room, position and counts.</p>
+<div class=grid id=reach-grid></div>
 
 <h2>Iterations</h2>
 <div class="card tw"><table><thead><tr><th>Run family</th><th>What changed</th><th>Frames</th><th>Best R (train)</th><th>Rooms</th>
